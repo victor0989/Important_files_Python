@@ -1,0 +1,81 @@
+import FreeCAD, Part, Draft
+from FreeCAD import Vector
+
+doc = FreeCAD.newDocument("ParkerSolarProbe")
+
+# 🔧 Función auxiliar para crear un hexágono inscrito
+def create_hexagon(center, diameter, thickness):
+    radius = diameter / 2
+    points = []
+    for i in range(6):
+        angle = i * 60
+        x = center.x + radius * FreeCAD.cos(angle * FreeCAD.pi / 180)
+        y = center.y + radius * FreeCAD.sin(angle * FreeCAD.pi / 180)
+        points.append(Vector(x, y, center.z))
+    hex = Part.makePolygon(points + [points[0]])
+    face = Part.Face(hex)
+    solid = face.extrude(Vector(0, 0, thickness))
+    return solid
+
+# 0️⃣ Bus principal
+bus_diameter = 1000
+bus_height = 3000
+bus = Part.makeCylinder(bus_diameter / 2, bus_height)
+bus.translate(Vector(0, 0, 0))
+Part.show(bus)
+
+# 1️⃣ TPS — Heat Shield
+tps_diameter = 2300
+tps_thickness = 114.3
+tps = create_hexagon(Vector(0, 0, bus_height), tps_diameter, tps_thickness)
+Part.show(tps)
+
+# 2️⃣ Mástil central
+mast = Part.makeCylinder(40, 900)
+mast.translate(Vector(0, 0, bus_height))
+Part.show(mast)
+
+# 3️⃣ Paneles solares (una ala como ejemplo)
+panel_length = 1120
+panel_width = 500
+panel_thickness = 4
+panel = Part.makeBox(panel_length, panel_width, panel_thickness)
+panel.translate(Vector(bus_diameter / 2 + 50, -panel_width / 2, 1000))
+Part.show(panel)
+
+# 4️⃣ Radiadores (uno como ejemplo)
+rad_size = 1050
+rad_thickness = 20
+radiator = Part.makeBox(rad_size, rad_size, rad_thickness)
+radiator.translate(Vector(-rad_size / 2, -rad_size / 2, bus_height - 200))
+Part.show(radiator)
+
+# 5️⃣ Antena FIELDS
+antenna_length = 2000
+antenna_diameter = 3.2
+antenna = Part.makeCylinder(antenna_diameter / 2, antenna_length)
+antenna.translate(Vector(0, 0, bus_height + tps_thickness))
+Part.show(antenna)
+
+# 6️⃣ Instrumentos (ejemplo SWEAP)
+sweap = Part.makeBox(600, 400, 300)
+sweap.translate(Vector(-300, -200, 500))
+Part.show(sweap)
+
+# 7️⃣ Tanque de propulsión
+tank_diameter = 600
+tank = Part.makeSphere(tank_diameter / 2)
+tank.translate(Vector(0, 0, 1000))
+Part.show(tank)
+
+# 8️⃣ Blindaje (MLI como envolvente del bus)
+mli = Part.makeCylinder((bus_diameter + 20) / 2, bus_height)
+mli.translate(Vector(0, 0, 0))
+Part.show(mli)
+
+# 9️⃣ Interfaces — anillo base
+ring = Part.makeCylinder(500, 12)
+ring.translate(Vector(0, 0, 0))
+Part.show(ring)
+
+doc.recompute()

@@ -1,0 +1,432 @@
+"""
+FreeCAD Parametric Satellite Generator
+=====================================
+This macro provides a **clean base** for AI assistants (Copilot, etc.) to generate
+fairly detailed CAD models—similar to the blueprint images—using the FreeCAD
+Python API only (Part/Draft; no external WB required). It includes:
+
+• A normalized **parameter schema** (JSON-friendly) in millimeters.
+• Builders for common spacecraft parts: bus, ring ("corona"), box payloads,
+  hex module, radiators, solar arrays with hinges, cylindrical/spherical tanks,
+  truss frame, antenna dish, and a propulsion nozzle block.
+• Simple **assembly** placements, metadata/material tagging, and optional FEM
+  containers (if the FEM WB is available).
+• Export helpers (STEP/STL/FCStd) and a minimal scene example.
+
+Tested against FreeCAD 0.21+. Keep units in **mm**.
+"""
+
+# ---------- Imports & guards ----------
+try:
+    import FreeCAD as App
+    import FreeCADGui as Gui
+    import Part
+    import Draft
+except Exception as e:
+    raise RuntimeError("Run this inside FreeCAD's Python console or as a macro.")
+
+from math import sin, cos, radians
+
+# ---------- Utility: Materials & metadata ----------
+
+DEFAULT_MATERIALS = {
+    "AL6061": {"density": 2.70e-6, "E": 69e3, "nu": 0.33},  # density g/mm^3
+    "AL7075": {"density": 2.81e-6, "E": 71.7e3, "nu": 0.33},
+    "Ti64":    {"density": 4.43e-6, "E": 113.8e3, "nu": 0.34},
+    "CFRP":    {"density": 1.60e-6, "E": 120e3, "nu": 0.27},
+    "Inconel": {"density": 8.19e-6, "E": 205e3, "nu": 0.29},
+    "SS316L":  {"density": 8.00e-6, "E": 200e3, "nu": 0.30},
+    "Graphite":{"density": 1.80e-6, "E": 10e3,  "nu": 0.20},
+}
+
+
+def tag_metadata(obj, kind: str, material: str = "", notes: str = ""):
+    """Attach simple, robust properties to any App::Part/Part::Feature."""
+    if not obj:
+        return
+    if not hasattr(obj, "addProperty"):
+        return
+    if "Kind" not in obj.PropertiesList:
+        obj.addProperty("App::PropertyString", "Kind", "AI_Meta", "Component type tag")
+    obj.Kind = kind
+    if "MaterialName" not in obj.PropertiesList:
+        obj.addProperty("App::PropertyString", "MaterialName", "AI_Meta", "Material tag")
+    obj.MaterialName = material
+    if "Notes" not in obj.PropertiesList:
+        obj.addProperty("App::PropertyString", "Notes", "AI_Meta", "Notes for AI/FEM")
+    obj.Notes = notes
+    # Attach coarse mass property, if density known (volume in mm^3)
+    try:
+        if material in DEFAULT_MATERIALS and hasattr(obj, "Shape"):
+            rho = DEFAULT_MATERIALS[material]["density"]  # g/mm^3
+            vol = obj.Shape.Volume
+            mass_g = vol * rho
+            if "Mass_g" not in obj.PropertiesList:
+                obj.addProperty("App::PropertyFloat", "Mass_g", "AI_Meta", "Approx mass in grams")
+            obj.Mass_g = float(mass_g)
+    except Exception:
+        pass
+
+
+# ---------- Builders: primitives & helpers ----------
+
+def make_hex_prism(R: float, h: float):
+    """Regular hexagon prism. R is circumradius (mm), h is height (mm)."""
+    import Draft
+    pts = []
+    for i in range(6):
+        ang = radians(60 * i)
+        pts.append(App.Vector(R * cos(ang), R * sin(ang), 0))
+    wire = Draft.makePolygon(pts, closed=True, face=True)
+    App.ActiveDocument.recompute()
+    prism = App.ActiveDocument.addObject("Part::Extrusion", "HexPrism")
+    prism.Base = wire
+    prism.Dir = App.Vector(0, 0, h)
+    App.ActiveDocument.recompute()
+    return prism
+
+
+def make_box(L: float, W: float, H: float, fillet: float = 0.0):
+    box = App.ActiveDocument.addObject("Part::Box", "Box")
+    box.Length, box.Width, box.Height = L, W, H
+    App.ActiveDocument.recompute()
+    if fillet > 0:
+        shape = box.Shape
+        edges = [e for e in shape.Edges]
+        fil = App.ActiveDocument.addObject("Part::Fillet", "BoxFillet")
+        fil.Base = box
+        fil.Edges = [(edge, fillet) for edge in range(1, len(edges)+1)]
+        App.ActiveDocument.recompute()
+        return fil
+    return box
+
+
+def make_cylinder(r: float, h: float):
+    cyl = App.ActiveDocument.addObject("Part::Cylinder", "Cylinder")
+    cyl.Radius, cyl.Height = r, h
+    App.ActiveDocument.recompute()
+    return cyl
+
+
+def loft_between_circles(r1: float, r2: float, h: float, name="Loft"):
+    c1 = Part.makeCircle(r1, App.Vector(0, 0, 0))
+    c2 = Part.makeCircle(r2, App.Vector(0, 0, h))
+    w1 = App.ActiveDocument.addObject("Part::Feature", name+"_Sec1")
+    w1.Shape = Part.Wire(c1.toShape())
+    w2 = App.ActiveDocument.addObject("Part::Feature", name+"_Sec2")
+    w2.Shape = Part.Wire(c2.toShape())
+    loft = App.ActiveDocument.addObject("Part::Loft", name)
+    loft.Sections = [w1, w2]
+    loft.Solid = True
+    App.ActiveDocument.recompute()
+    return loft
+
+
+def revolve_profile(points, angle=360.0, axis=App.Vector(0,1,0), base=App.Vector(0,0,0), name="Revolve"):
+    """Create a surface of revolution from polyline points (in XZ plane)."""
+    import Draft
+    poly = Draft.makeWire([App.Vector(p[0], 0, p[1]) for p in points], closed=False)
+    App.ActiveDocument.recompute()
+    feat = App.ActiveDocument.addObject("Part::Revolution", name)
+    feat.Source = poly
+    feat.Axis = axis
+    feat.Base = base
+    feat.Angle = angle
+    App.ActiveDocument.recompute()
+    return feat
+
+
+# ---------- High-level components ----------
+
+def build_bus_cylinder(d: float, h: float, material="AL7075"):
+    obj = make_cylinder(d/2, h)
+    obj.Label = "Bus"
+    tag_metadata(obj, "bus", material, "Primary cylindrical bus")
+    return obj
+
+
+def build_corona_ring(outer_d: float, width: float, thick: float, material="Ti64"):
+    ring_outer = make_cylinder(outer_d/2, thick)
+    hole = make_cylinder(outer_d/2 - width, thick)
+    hole.Placement.Base = App.Vector(0,0,0)
+    App.ActiveDocument.recompute()
+    cut = App.ActiveDocument.addObject("Part::Cut", "Corona")
+    cut.Base = ring_outer
+    cut.Tool = hole
+    App.ActiveDocument.recompute()
+    tag_metadata(cut, "corona", material, "Structural ring")
+    return cut
+
+
+def build_payload_box(L,W,H, fillet=4.0, material="AL6061"):
+    obj = make_box(L,W,H,fillet)
+    obj.Label = "PayloadBox"
+    tag_metadata(obj, "payload", material, "Electronics payload")
+    return obj
+
+
+def build_hex_module(flat_to_flat: float, h: float, material="CFRP"):
+    R = flat_to_flat/ (2*cos(radians(30)))
+    obj = make_hex_prism(R, h)
+    obj.Label = "HexModule"
+    tag_metadata(obj, "hex-module", material, "Hexagonal equipment bay")
+    return obj
+
+
+def build_radiator(L, W, t=8.0, hole_phi=6.0, hole_grid=(4,3), material="AL6061"):
+    plate = make_box(L, W, t)
+    plate.Label = "Radiator"
+    # Drill grid of small holes (mounting / tube pass-through)
+    dx, dy = hole_grid
+    import numpy as np
+    margin = 0.1*min(L,W)
+    xs = np.linspace(margin, L-margin, dx)
+    ys = np.linspace(margin, W-margin, dy)
+    holes = []
+    for x in xs:
+        for y in ys:
+            h = make_cylinder(hole_phi/2, t*1.2)
+            h.Placement.Base = App.Vector(x, y, -0.1*t)
+            holes.append(h)
+    App.ActiveDocument.recompute()
+    cut = plate
+    for h in holes:
+        c = App.ActiveDocument.addObject("Part::Cut", "RadCut")
+        c.Base = cut
+        c.Tool = h
+        App.ActiveDocument.recompute()
+        cut = c
+    cut.Label = "Radiator"
+    tag_metadata(cut, "radiator", material, "Flat radiator with mounting grid")
+    return cut
+
+
+def build_solar_array(L, W, t=4.0, hinge_d=20.0, material="CFRP"):
+    panel = make_box(L, W, t)
+    panel.Label = "SolarPanel"
+    hinge = make_cylinder(hinge_d/2, W)
+    hinge.Placement.Rotation = App.Rotation(App.Vector(0,1,0), 90)
+    hinge.Placement.Base = App.Vector(0, W/2, t/2)
+    fuse = App.ActiveDocument.addObject("Part::Fuse", "SolarArray")
+    fuse.Base = panel
+    fuse.Tool = hinge
+    App.ActiveDocument.recompute()
+    tag_metadata(fuse, "solar-array", material, "Panel with edge hinge")
+    return fuse
+
+
+def build_tank(d: float, L: float, endcap="hemispherical", material="SS316L"):
+    body = make_cylinder(d/2, L)
+    if endcap == "hemispherical":
+        hemi1 = Part.makeSphere(d/2)
+        hemi2 = Part.makeSphere(d/2)
+        f1 = App.ActiveDocument.addObject("Part::Feature", "Hemi1")
+        f1.Shape = hemi1
+        f1.Placement.Base = App.Vector(0,0,0)
+        f2 = App.ActiveDocument.addObject("Part::Feature", "Hemi2")
+        f2.Shape = hemi2
+        f2.Placement.Base = App.Vector(0,0,L)
+        # cut the hemispheres in half using a plane
+        # (FreeCAD Part primitives have no direct hemisphere; we fuse then cut)
+        App.ActiveDocument.recompute()
+        fuse1 = App.ActiveDocument.addObject("Part::Fuse", "TankFuse1")
+        fuse1.Base = body
+        fuse1.Tool = f1
+        App.ActiveDocument.recompute()
+        fuse2 = App.ActiveDocument.addObject("Part::Fuse", "TankFuse2")
+        fuse2.Base = fuse1
+        fuse2.Tool = f2
+        App.ActiveDocument.recompute()
+        obj = fuse2
+    else:
+        obj = body
+    obj.Label = "Tank"
+    tag_metadata(obj, "tank", material, "Propellant tank")
+    return obj
+
+
+def build_truss(points, d=40.0, material="Ti64"):
+    """Create cylinders along a list of 3D points (polyline truss)."""
+    elems = []
+    for i in range(len(points)-1):
+        a, b = App.Vector(*points[i]), App.Vector(*points[i+1])
+        vec = b - a
+        h = vec.Length
+        cyl = make_cylinder(d/2, h)
+        # orient
+        axis = App.Vector(0,0,1)
+        rot = App.Rotation(axis, vec)
+        cyl.Placement = App.Placement(a, rot)
+        elems.append(cyl)
+    # fuse all
+    base = elems[0]
+    for e in elems[1:]:
+        f = App.ActiveDocument.addObject("Part::Fuse", "TrussFuse")
+        f.Base = base
+        f.Tool = e
+        App.ActiveDocument.recompute()
+        base = f
+    base.Label = "Truss"
+    tag_metadata(base, "truss", material, "Cylindrical strut truss")
+    return base
+
+
+def build_dish(d_outer: float, depth: float, rim: float = 3.0, material="CFRP"):
+    # Parabolic-like profile with small rim thickness, then revolve
+    # Profile points in XZ plane
+    p = [
+        (0.0, 0.0),
+        (depth*0.2, depth*0.3),
+        (d_outer/2 - rim, depth),
+        (d_outer/2, depth)
+    ]
+    dish = revolve_profile(p, name="Dish")
+    dish.Label = "AntennaDish"
+    tag_metadata(dish, "dish", material, "Revolved dish profile")
+    return dish
+
+
+def build_nozzle(d_throat: float, d_exit: float, L: float, material="Inconel"):
+    obj = loft_between_circles(d_throat/2, d_exit/2, L, name="Nozzle")
+    obj.Label = "Nozzle"
+    tag_metadata(obj, "nozzle", material, "Axisymmetric nozzle")
+    return obj
+
+
+# ---------- Assembly helpers ----------
+
+def place(obj, x=0, y=0, z=0, rx=0, ry=0, rz=0):
+    obj.Placement = App.Placement(App.Vector(x,y,z), App.Rotation(rx, ry, rz))
+    return obj
+
+
+def group(label: str, objs):
+    grp = App.ActiveDocument.addObject('App::Part', label)
+    for o in objs:
+        o.adjustRelativeLinks(grp)
+        grp.addObject(o)
+    return grp
+
+
+# ---------- Optional FEM scaffolding ----------
+
+def ensure_fem_analysis(name="Analysis"):
+    try:
+        import ObjectsFem
+        analysis = App.ActiveDocument.addObject("Fem::Analysis", name)
+        return analysis
+    except Exception:
+        return None
+
+
+# ---------- Export helpers ----------
+
+def export_step(objs, path):
+    try:
+        import ImportGui
+        ImportGui.export(objs, path)
+    except Exception as e:
+        App.Console.PrintError(f"STEP export failed: {e}\n")
+
+
+def export_stl(objs, path):
+    try:
+        import MeshPart
+        MeshPart.export(objs, path)
+    except Exception as e:
+        App.Console.PrintError(f"STL export failed: {e}\n")
+
+
+# ---------- Example scene (edit/extend programmatically) ----------
+
+def example_scene(params: dict = None):
+    doc = App.ActiveDocument or App.newDocument("SatGen")
+
+    # Defaults resembling the blueprint style satellite
+    P = params or {
+        "bus": {"d": 1200, "h": 1600, "material": "AL7075", "pos": [0,0,0]},
+        "corona": {"outer_d": 1800, "width": 150, "thick": 80, "pos": [0,0,700]},
+        "payload1": {"L": 600, "W": 600, "H": 500, "pos": [500,0,900]},
+        "payload2": {"L": 500, "W": 400, "H": 400, "pos": [-520,120,880]},
+        "hex": {"flat": 700, "h": 400, "pos": [0,0,1100]},
+        "radiatorL": {"L": 1200, "W": 900, "t": 15, "pos": [900,0,1150]},
+        "radiatorR": {"L": 1200, "W": 900, "t": 15, "pos": [-900,0,1150]},
+        "arrayL": {"L": 2200, "W": 1200, "t": 4, "pos": [0,1600,1200], "rot": [0,0,90]},
+        "arrayR": {"L": 2200, "W": 1200, "t": 4, "pos": [0,-1600,1200], "rot": [0,0,90]},
+        "tank1": {"d": 500, "L": 1100, "pos": [300,300,400]},
+        "tank2": {"d": 500, "L": 1100, "pos": [-300,300,300]},
+        "truss": {"pts": [[200,200,500],[200,200,1100],[ -200,-200,1100],[-200,-200,500]], "d": 70},
+        "dish": {"d": 1200, "depth": 260, "pos": [0,0,1700]},
+        "nozzle": {"dt": 300, "de": 800, "L": 700, "pos": [0,0,-300]},
+    }
+
+    objs = []
+    bus = build_bus_cylinder(**{k:v for k,v in P["bus"].items() if k in ("d","h","material")})
+    place(bus, *P["bus"]["pos"])
+    objs.append(bus)
+
+    corona = build_corona_ring(**{k:v for k,v in P["corona"].items() if k in ("outer_d","width","thick")})
+    place(corona, *P["corona"]["pos"])
+    objs.append(corona)
+
+    p1 = build_payload_box(**{k:v for k,v in P["payload1"].items() if k in ("L","W","H")})
+    place(p1, *P["payload1"]["pos"])
+    objs.append(p1)
+
+    p2 = build_payload_box(**{k:v for k,v in P["payload2"].items() if k in ("L","W","H")})
+    place(p2, *P["payload2"]["pos"])
+    objs.append(p2)
+
+    hexm = build_hex_module(P["hex"]["flat"], P["hex"]["h"])
+    place(hexm, *P["hex"]["pos"])
+    objs.append(hexm)
+
+    rL = build_radiator(**{k:v for k,v in P["radiatorL"].items() if k in ("L","W","t")})
+    place(rL, *P["radiatorL"]["pos"]) ; objs.append(rL)
+    rR = build_radiator(**{k:v for k,v in P["radiatorR"].items() if k in ("L","W","t")})
+    place(rR, *P["radiatorR"]["pos"]) ; objs.append(rR)
+
+    aL = build_solar_array(**{k:v for k,v in P["arrayL"].items() if k in ("L","W","t")})
+    place(aL, *P["arrayL"]["pos"], *P["arrayL"].get("rot", [0,0,0])) ; objs.append(aL)
+    aR = build_solar_array(**{k:v for k,v in P["arrayR"].items() if k in ("L","W","t")})
+    place(aR, *P["arrayR"]["pos"], *P["arrayR"].get("rot", [0,0,0])) ; objs.append(aR)
+
+    t1 = build_tank(**{k:v for k,v in P["tank1"].items() if k in ("d","L")})
+    place(t1, *P["tank1"]["pos"]) ; objs.append(t1)
+    t2 = build_tank(**{k:v for k,v in P["tank2"].items() if k in ("d","L")})
+    place(t2, *P["tank2"]["pos"]) ; objs.append(t2)
+
+    tr = build_truss(P["truss"]["pts"], P["truss"].get("d", 60))
+    objs.append(tr)
+
+    dish = build_dish(P["dish"]["d"], P["dish"]["depth"]) ; place(dish, *P["dish"]["pos"]) ; objs.append(dish)
+    noz = build_nozzle(P["nozzle"]["dt"], P["nozzle"]["de"], P["nozzle"]["L"]) ; place(noz, *P["nozzle"]["pos"]) ; objs.append(noz)
+
+    grp = group("Satellite", objs)
+    App.ActiveDocument.recompute()
+    try:
+        Gui.ActiveDocument.ActiveView.fitAll()
+    except Exception:
+        pass
+    return grp
+
+
+# ---------- JSON-style parameter schema (for AI/Copilot) ----------
+SCHEMA = {
+    "bus": {"d": "mm (diameter)", "h": "mm (height)", "material": "Material tag", "pos": ["x","y","z"]},
+    "corona": {"outer_d": "mm", "width": "mm radial ring width", "thick": "mm", "pos": ["x","y","z"]},
+    "payload#": {"L": "mm", "W": "mm", "H": "mm", "fillet": "mm", "pos": ["x","y","z"]},
+    "hex": {"flat": "mm flat-to-flat", "h": "mm height", "pos": ["x","y","z"]},
+    "radiator#": {"L": "mm", "W": "mm", "t": "mm", "pos": ["x","y","z"]},
+    "array#": {"L": "mm", "W": "mm", "t": "mm", "pos": ["x","y","z"], "rot": ["rx","ry","rz"]},
+    "tank#": {"d": "mm", "L": "mm", "pos": ["x","y","z"]},
+    "truss": {"pts": "list of 3D points", "d": "mm strut diameter"},
+    "dish": {"d": "mm rim diameter", "depth": "mm", "pos": ["x","y","z"]},
+    "nozzle": {"dt": "mm throat", "de": "mm exit", "L": "mm length", "pos": ["x","y","z"]}
+}
+
+
+# ---------- Auto-run demo (comment if embedding) ----------
+if __name__ == "__main__":
+    example_scene()
+    App.ActiveDocument.recompute()

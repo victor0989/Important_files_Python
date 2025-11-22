@@ -1,0 +1,102 @@
+import FreeCAD as App, Part, math
+
+doc = App.newDocument("SatelliteClean")
+
+# Utilidad
+def add(name, shape, color=(0.8,0.8,0.8)):
+    obj = doc.addObject("Part::Feature", name)
+    obj.Shape = shape
+    obj.ViewObject.ShapeColor = color
+    return obj
+
+# ---- EXOESQUELETO ----
+across_flats = 3.5
+circR = across_flats / math.sqrt(3)
+Lz = 2.8
+bw, bh = 0.08, 0.08
+v0 = [App.Vector(circR*math.cos(math.radians(60*i)),
+                 circR*math.sin(math.radians(60*i)),0) for i in range(6)]
+v1 = [App.Vector(p.x, p.y, Lz) for p in v0]
+
+beams = []
+for ring in (v0,v1):
+    for i in range(6):
+        p1, p2 = ring[i], ring[(i+1)%6]
+        vec = p2.sub(p1)
+        box = Part.makeBox(vec.Length, bw, bh)
+        box.translate(App.Vector(0,-bw/2,-bh/2))
+        rot = App.Rotation(App.Vector(1,0,0), vec)
+        box.rotate(App.Vector(0,0,0), rot.Axis, rot.Angle)
+        box.translate(p1)
+        beams.append(box)
+for i in range(6):
+    p1, p2 = v0[i], v1[i]
+    vec = p2.sub(p1)
+    box = Part.makeBox(vec.Length, bw, bh)
+    box.translate(App.Vector(0,-bw/2,-bh/2))
+    rot = App.Rotation(App.Vector(1,0,0), vec)
+    box.rotate(App.Vector(0,0,0), rot.Axis, rot.Angle)
+    box.translate(p1)
+    beams.append(box)
+
+exo = beams[0]
+for b in beams[1:]:
+    exo = exo.fuse(b)
+add("Exoskeleton", exo, (0.75,0.75,0.8))
+
+# ---- CORONA ----
+outer_r = 1.5
+ring = Part.makeCylinder(outer_r, 0.15).cut(Part.makeCylinder(outer_r-0.2,0.15))
+ring.translate(App.Vector(0,0,0.3))
+add("Corona", ring, (0.75,0.75,0.8))
+
+# ---- TANQUE PROPULSION ----
+tank = Part.makeCylinder(0.45, 1.8)
+tank.translate(App.Vector(0,0,-0.9))
+add("Tank", tank, (0.8,0.85,0.95))
+
+# ---- MÓDULO PROPULSOR ----
+nozzle = Part.makeCone(0.5, 0.2, 2.0)
+nozzle.translate(App.Vector(0,0,-2.9))
+add("Propulsion", nozzle, (0.4,0.4,0.45))
+
+# ---- ACUMULADOR ----
+acc = Part.makeCylinder(0.2, 1.2)
+acc.translate(App.Vector(0,-1.2,-0.6))
+add("Accumulator", acc, (0.85,0.85,0.9))
+
+# ---- RADIADORES ----
+rad1 = Part.makeBox(2.0, 1.2, 0.015)
+rad1.translate(App.Vector(-1.0, 1.9, 0.4))
+rad2 = rad1.copy()
+rad2.translate(App.Vector(2.0, -3.8, 0))  # lado opuesto
+add("Radiator1", rad1, (0.9,0.9,0.9))
+add("Radiator2", rad2, (0.9,0.9,0.9))
+
+# ---- HGA ----
+dish = Part.makeSphere(1.0)  # radio 1 m
+cut = Part.makeCylinder(1.0, 2.0, App.Vector(0,0,-1.0))
+dish = dish.common(cut)
+dish.translate(App.Vector(0,0,4.8))
+mast = Part.makeCylinder(0.05, 2.2)
+mast.translate(App.Vector(0,0,2.6))
+hga = dish.fuse(mast)
+add("HGA", hga, (0.9,0.9,0.95))
+
+# ---- FAN BEAM ----
+fdish = Part.makeSphere(0.45)
+fcut = Part.makeCylinder(0.45, 1.0, App.Vector(0,0,-0.5))
+fdish = fdish.common(fcut)
+fdish.translate(App.Vector(0,1.5,0.8))
+farm = Part.makeCylinder(0.03, 0.6, App.Vector(0,1,0))
+farm.translate(App.Vector(0,0.9,0.8))
+fanbeam = fdish.fuse(farm)
+add("FanBeam", fanbeam, (0.85,0.9,1.0))
+
+# ---- PAYLOAD PT03 ----
+pt = Part.makeBox(0.5, 0.4, 0.3)
+pt.translate(App.Vector(-0.25,-0.2,0.5))
+add("Payload", pt, (0.7,0.7,0.8))
+
+doc.recompute()
+

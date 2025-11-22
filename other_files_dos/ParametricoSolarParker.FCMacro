@@ -1,0 +1,81 @@
+import FreeCAD as App, Part, math
+
+doc = App.newDocument("HexSatellite")
+
+# ===== PARÁMETROS =====
+across_flats = 3.5      # distancia de cara a cara del hexágono central [m]
+altura_hex = 2.8        # altura del núcleo
+ancho_viga = 0.08       # ancho de vigas del marco
+alto_viga  = 0.08
+tam_cubo   = 0.6        # tamaño de módulos cúbicos laterales [m]
+espacio_cubos = 0.05    # separación entre cubos
+diam_plato = 2.0        # diámetro de la antena [m]
+gros_plato = 0.03       # grosor del plato [m]
+altura_mastil = 1.0     # altura del mástil de la antena
+
+# ===== UTILS =====
+def add_shape(name, shape, color=(0.8,0.8,0.8)):
+    obj = doc.addObject("Part::Feature", name)
+    obj.Shape = shape
+    obj.ViewObject.ShapeColor = color
+    return shape
+
+def hex_vertices(circumR, z=0):
+    return [App.Vector(circumR*math.cos(math.radians(60*i)),
+                       circumR*math.sin(math.radians(60*i)), z)
+            for i in range(6)]
+
+# ===== MARCO HEXAGONAL =====
+circumR = across_flats / math.sqrt(3.0)
+v0 = hex_vertices(circumR, 0)
+v1 = hex_vertices(circumR, altura_hex)
+
+partes = []
+# anillos superior e inferior
+for ring in (v0, v1):
+    for i in range(6):
+        p1, p2 = ring[i], ring[(i+1)%6]
+        vec = p2.sub(p1)
+        box = Part.makeBox(vec.Length, ancho_viga, alto_viga)
+        box.translate(App.Vector(0, -ancho_viga/2, -alto_viga/2))
+        rot = App.Rotation(App.Vector(1,0,0), vec)
+        box.rotate(App.Vector(0,0,0), rot.Axis, rot.Angle)
+        box.translate(p1)
+        partes.append(box)
+# vigas verticales
+for i in range(6):
+    p1, p2 = v0[i], v1[i]
+    vec = p2.sub(p1)
+    box = Part.makeBox(vec.Length, ancho_viga, alto_viga)
+    box.translate(App.Vector(0, -ancho_viga/2, -alto_viga/2))
+    rot = App.Rotation(App.Vector(1,0,0), vec)
+    box.rotate(App.Vector(0,0,0), rot.Axis, rot.Angle)
+    box.translate(p1)
+    partes.append(box)
+
+# ===== CUBOS LATERALES =====
+for i in range(6):
+    ang = math.radians(60*i)
+    # centro del cubo separado de la cara
+    offset = circumR + tam_cubo/2 + espacio_cubos
+    cx = offset * math.cos(ang)
+    cy = offset * math.sin(ang)
+    cz = tam_cubo/2
+    cube = Part.makeBox(tam_cubo, tam_cubo, tam_cubo)
+    cube.translate(App.Vector(cx - tam_cubo/2, cy - tam_cubo/2, cz))
+    partes.append(cube)
+
+# ===== ANTENA ARRIBA =====
+plato = Part.makeCylinder(diam_plato/2, gros_plato)
+plato.translate(App.Vector(0,0,altura_hex + altura_mastil + gros_plato))
+mastil = Part.makeCylinder(0.05, altura_mastil)
+mastil.translate(App.Vector(0,0,altura_hex))
+partes.extend([plato, mastil])
+
+# ===== FUSIÓN TOTAL =====
+satellite = partes[0]
+for p in partes[1:]:
+    satellite = satellite.fuse(p)
+
+add_shape("HexSatellite_Fused", satellite, (0.9,0.85,0.85))
+doc.recompute()

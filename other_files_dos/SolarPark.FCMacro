@@ -1,0 +1,516 @@
+# -*- coding: utf-8 -*-
+# Sonda espacial "tipo Parker": ensamblaje paramétrico + preparación de casos FEM
+# Autor: Copilot (para Víctor)
+# Nota: Este script crea geometría, coloca componentes, asigna materiales y define
+#       contenedores de análisis FEM con cargas/condiciones típicas. Revísalo y
+#       ajústalo a tu versión de FreeCAD si algún objeto FEM cambia de nombre.
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import math
+
+# Intentar cargar FEM si está disponible
+try:
+    import Fem
+    FEM_AVAILABLE = True
+except Exception:
+    FEM_AVAILABLE = False
+
+# -------------------------------
+# Parámetros globales (metros, Pa, kg/m^3, etc.)
+# -------------------------------
+
+P = {
+    # Estructura global / referencias
+    "origin": App.Vector(0, 0, 0),
+
+    # 1) HGA
+    "HGA_d": 2.0,
+    "HGA_t": 0.03,
+    "HGA_mast_len": 2.2,
+    "HGA_mast_d": 0.10,
+    "HGA_offset": App.Vector(0, 0, 2.4),
+
+    # 2) Fan Beam
+    "FAN_d": 0.9,
+    "FAN_t": 0.02,
+    "FAN_offset": App.Vector(2.2, 0, 1.2),
+
+    # 3) Exoesqueleto hexagonal
+    "EXO_W": 3.5,
+    "EXO_H": 2.8,
+    "EXO_beam": 0.08,
+
+    # 4) Radiadores
+    "RAD_L": 2.0,
+    "RAD_H": 1.2,
+    "RAD_t": 0.015,
+    "RAD_offset_L": App.Vector(0, 1.9, 0.5),
+    "RAD_offset_R": App.Vector(0, -1.9, 0.5),
+
+    # 5) Sensor PT03
+    "PT03_x": 0.5,
+    "PT03_y": 0.4,
+    "PT03_z": 0.3,
+    "PT03_offset": App.Vector(-0.9, 0, 0.6),
+
+    # 6) Válvulas
+    "VAL_d": 0.06,
+    "VAL_L": 0.15,
+
+    # 7) Acumulador
+    "ACC_d": 0.4,
+    "ACC_L": 1.2,
+    "ACC_offset": App.Vector(0.0, 0.9, 0.0),
+
+    # 8) Tanque propelente
+    "TANK_d": 0.9,
+    "TANK_L": 1.8,
+    "TANK_offset": App.Vector(0, 0, 0.0),
+
+    # 9) Módulo de propulsión
+    "PROP_d": 1.0,
+    "PROP_L": 2.0,
+    "PROP_offset": App.Vector(0, 0, -1.8),
+
+    # 10) Corona estructural
+    "RING_d": 3.0,
+    "RING_t": 0.15,
+    "RING_offset": App.Vector(0, 0, 0.9),
+
+    # FEM y constantes
+    "g": 9.81,
+}
+
+# Materiales (densidad, E, nu, alfa T) — valores típicos aproximados
+MATS = {
+    "Al_7075_T6":  {"rho": 2810, "E": 71e9,  "nu": 0.33, "alpha": 23e-6},
+    "Al_Anodizado":{"rho": 2700, "E": 69e9,  "nu": 0.33, "alpha": 23e-6},
+    "Al_Li":       {"rho": 2600, "E": 80e9,  "nu": 0.33, "alpha": 22e-6},
+    "Ti_Gr5":      {"rho": 4430, "E": 114e9, "nu": 0.34, "alpha": 9e-6},
+    "Ti_Gr9":      {"rho": 4600, "E": 100e9, "nu": 0.34, "alpha": 9e-6},
+    "SS_316L":     {"rho": 8000, "E": 193e9, "nu": 0.30, "alpha": 16e-6},
+    "CFRP_HC":     {"rho": 1600, "E": 70e9,  "nu": 0.28, "alpha": 0.5e-6},
+    "WC_Carburo":  {"rho": 15500,"E": 600e9, "nu": 0.22, "alpha": 5e-6},
+    "GrafitoRef":  {"rho": 1900, "E": 10e9,  "nu": 0.20, "alpha": 3e-6},
+    "Ceramico":    {"rho": 3600, "E": 300e9, "nu": 0.22, "alpha": 4e-6},
+}
+
+# Colores RGBA (0-1)
+C = {
+    "al": (0.75, 0.75, 0.80, 1.0),
+    "ti": (0.60, 0.65, 0.70, 1.0),
+    "cf": (0.10, 0.10, 0.10, 1.0),
+    "ss": (0.80, 0.80, 0.80, 1.0),
+    "wc": (0.35, 0.35, 0.35, 1.0),
+    "gr": (0.20, 0.20, 0.20, 1.0),
+    "ring": (0.55, 0.60, 0.65, 1.0),
+    "pt03": (0.85, 0.75, 0.55, 1.0),
+    "rad": (0.90, 0.90, 0.95, 1.0),
+    "mli": (0.95, 0.95, 0.75, 0.25),
+    "hga": (0.85, 0.85, 0.90, 1.0),
+    "fan": (0.15, 0.15, 0.15, 1.0)
+}
+
+doc = App.newDocument("Sonda_Parker_Probe")
+
+# -------------------------------
+# Utilidades
+# -------------------------------
+
+def set_color(obj, rgba):
+    try:
+        Gui.ActiveDocument.getObject(obj.Name).ShapeColor = rgba[:3]
+        Gui.ActiveDocument.getObject(obj.Name).Transparency = int((1.0 - rgba[3]) * 100)
+    except Exception:
+        pass
+
+def place(obj, base_vec=App.Vector(0,0,0), axis=App.Vector(0,0,1), angle_deg=0.0):
+    obj.Placement = App.Placement(base_vec, App.Rotation(axis, angle_deg))
+
+def add_part(shape, name, color=None, base=App.Vector(0,0,0), axis=App.Vector(0,0,1), ang=0.0, parent=None):
+    feat = doc.addObject("Part::Feature", name)
+    feat.Shape = shape
+    place(feat, base, axis, ang)
+    if color:
+        set_color(feat, color)
+    if parent:
+        parent.addObject(feat)
+    return feat
+
+def deg(rad):
+    return rad * 180.0 / math.pi
+
+def rotation_from_vectors(v_from, v_to):
+    v_from = App.Vector(v_from).normalize()
+    v_to = App.Vector(v_to).normalize()
+    return App.Rotation(v_from, v_to)
+
+def make_box(dx, dy, dz):
+    return Part.makeBox(dx, dy, dz)
+
+def make_cyl(r, h):
+    return Part.makeCylinder(r, h)
+
+def make_torus(R, r):
+    return Part.makeTorus(R, r)
+
+def square_beam_box(p1, p2, side):
+    # Caja alargada de sección cuadrada que conecta p1 -> p2
+    v = p2.sub(p1)
+    L = v.Length
+    if L <= 1e-6:
+        return None
+    # Caja alineada con X local; luego rotamos hacia v y movemos
+    box = Part.makeBox(L, side, side)
+    # Centro lateral: desplazar para que el eje pase por el centro del perfil
+    # Colocar origen en p1, rotar y trasladar media longitud
+    feat = doc.addObject("Part::Feature", "BeamTemp")
+    feat.Shape = box
+    rot = rotation_from_vectors(App.Vector(1,0,0), v)
+    feat.Placement = App.Placement(p1, rot)
+    # trasladar en X la mitad de la longitud y en Y/Z la mitad del lado para centrar
+    feat.Placement.Base = feat.Placement.Base.add(rot.multVec(App.Vector(L/2.0, side/2.0, side/2.0)))
+    doc.recompute()
+    solid = feat.Shape.copy()
+    doc.removeObject(feat.Name)
+    return solid
+
+def add_FEM_material(obj, mat_name, analysis):
+    if not FEM_AVAILABLE:
+        return None
+    props = MATS.get(mat_name, None)
+    if not props:
+        return None
+    mat = doc.addObject("Fem::MaterialSolid", f"Mat_{mat_name}_{obj.Name}")
+    mat.Material = {
+        "Name": mat_name,
+        "YoungsModulus": f'{props["E"]} Pa',
+        "PoissonRatio": f'{props["nu"]}',
+        "Density": f'{props["rho"]} kg/m^3',
+        "ThermalExpansionCoefficient": f'{props["alpha"]} m/m/K'
+    }
+    mat.References = [(obj, "")]
+    analysis.addObject(mat)
+    return mat
+
+def all_faces(obj):
+    return [(obj, f"Face{idx+1}") for idx in range(len(obj.Shape.Faces))]
+
+# -------------------------------
+# Grupos
+# -------------------------------
+
+grp_main = doc.addObject("App::DocumentObjectGroup", "Ensamblaje_Sonda")
+grp_struct = doc.addObject("App::DocumentObjectGroup", "Estructura")
+grp_antennas = doc.addObject("App::DocumentObjectGroup", "Antenas")
+grp_thermal = doc.addObject("App::DocumentObjectGroup", "Termico")
+grp_prop = doc.addObject("App::DocumentObjectGroup", "Propulsion")
+grp_payload = doc.addObject("App::DocumentObjectGroup", "CargaUtil")
+
+grp_main.addObject(grp_struct)
+grp_main.addObject(grp_antennas)
+grp_main.addObject(grp_thermal)
+grp_main.addObject(grp_prop)
+grp_main.addObject(grp_payload)
+
+# -------------------------------
+# 3) Exoesqueleto hexagonal (Ti Gr5)
+# -------------------------------
+
+def build_exoskeleton():
+    W = P["EXO_W"]
+    H = P["EXO_H"]
+    s = P["EXO_beam"]
+    # Hexágono "flat-top" escalado a W x H
+    hx = W / 2.0
+    hy = H / (math.sqrt(3))
+    pts = [
+        App.Vector(+hx, 0, 0),
+        App.Vector(+hx/2.0, +hy, 0),
+        App.Vector(-hx/2.0, +hy, 0),
+        App.Vector(-hx, 0, 0),
+        App.Vector(-hx/2.0, -hy, 0),
+        App.Vector(+hx/2.0, -hy, 0),
+        App.Vector(+hx, 0, 0)  # cierre
+    ]
+    beams = []
+    for i in range(6):
+        b = square_beam_box(pts[i], pts[i+1], s)
+        if b:
+            beams.append(b)
+    exo = Part.Compound(beams).removeSplitter()
+    obj = add_part(exo, "Exoesqueleto_Ti_Gr5", C["ti"], parent=grp_struct)
+    return obj
+
+exo_obj = build_exoskeleton()
+
+# -------------------------------
+# 10) Corona estructural (Ti Gr9)
+# -------------------------------
+
+R_ring = P["RING_d"] / 2.0
+r_ring = P["RING_t"] / 2.0
+ring_shape = make_torus(R_ring, r_ring)
+ring_obj = add_part(ring_shape, "Corona_Estructural_Ti_Gr9", C["ring"], base=P["RING_offset"], parent=grp_struct)
+
+# -------------------------------
+# 8) Tanque de propelente (Al-Li) + 7) Acumulador (SS316L+MLI)
+# -------------------------------
+
+# Tanque cilíndrico
+tank = make_cyl(P["TANK_d"]/2.0, P["TANK_L"])
+tank_obj = add_part(tank, "Tanque_Propelente_AlLi", C["al"], base=P["TANK_offset"] + App.Vector(0,0,-P["TANK_L"]/2.0), parent=grp_prop)
+
+# Acumulador
+acc = make_cyl(P["ACC_d"]/2.0, P["ACC_L"])
+acc_obj = add_part(acc, "Acumulador_SS316L", C["ss"], base=P["ACC_offset"] + App.Vector(0,0,-P["ACC_L"]/2.0), parent=grp_prop)
+# MLI como cilindro fino ligeramente mayor (transparente)
+acc_mli = make_cyl(P["ACC_d"]/2.0 + 0.01, P["ACC_L"])
+acc_mli_obj = add_part(acc_mli, "Acumulador_MLI", C["mli"], base=P["ACC_offset"] + App.Vector(0,0,-P["ACC_L"]/2.0), parent=grp_prop)
+
+# -------------------------------
+# 9) Módulo de propulsión (WC + grafito)
+# -------------------------------
+
+# Bloque principal cilíndrico + tobera (cono)
+prop_block = make_cyl(P["PROP_d"]/2.0, P["PROP_L"]*0.6)
+nozzle = Part.makeCone(P["PROP_d"]/2.0 * 0.8, P["PROP_d"]/2.0 * 0.2, P["PROP_L"]*0.4)
+nozzle.Placement = App.Placement(App.Vector(0,0,-P["PROP_L"]*0.4), App.Rotation())
+prop_shape = prop_block.fuse(nozzle)
+
+prop_obj = add_part(prop_shape, "Modulo_Propulsion_WC", C["wc"], base=P["PROP_offset"], parent=grp_prop)
+# Revestimiento grafito (leve carcasa)
+coat = Part.makeCylinder((P["PROP_d"]/2.0)+0.01, P["PROP_L"]*0.6)
+coat_obj = add_part(coat, "Revestimiento_Grafito", C["gr"], base=P["PROP_offset"], parent=grp_prop)
+
+# Ensamble: propulsión unida a tanque (coaxial)
+# Ya están coaxiales por construcción: tanque en z~0..-L, prop en z negativo
+
+# -------------------------------
+# 4) Radiadores (Al anodizado, pintura Z-93)
+# -------------------------------
+
+def build_radiator(name, base_vec):
+    rad = make_box(P["RAD_L"], P["RAD_H"], P["RAD_t"])
+    # Colocar plano del panel con su espesor en z
+    obj = add_part(rad, name, C["rad"], base=base_vec + App.Vector(-P["RAD_L"]/2.0, -P["RAD_H"]/2.0, 0.0), parent=grp_thermal)
+    # Bisagra simple (cilindro)
+    hinge = make_cyl(0.03, 0.20)
+    hinge_obj = add_part(hinge, f"Bisagra_{name}", C["al"], base=base_vec + App.Vector(-P["RAD_L"]/2.0, 0.0, 0.0), axis=App.Vector(0,1,0), ang=90.0, parent=grp_thermal)
+    return obj, hinge_obj
+
+rad_L, hinge_L = build_radiator("Radiador_L", P["RAD_offset_L"])
+rad_R, hinge_R = build_radiator("Radiador_R", P["RAD_offset_R"])
+
+# -------------------------------
+# 5) Sensor PT03 (Al blindado + encapsulado cerámico)
+# -------------------------------
+
+pt03 = make_box(P["PT03_x"], P["PT03_y"], P["PT03_z"])
+pt03_obj = add_part(pt03, "Sensor_PT03", C["pt03"], base=P["PT03_offset"] + App.Vector(-P["PT03_x"]/2.0, -P["PT03_y"]/2.0, 0), parent=grp_payload)
+# Encapsulado cerámico (caja fina externa)
+pt03_cer = make_box(P["PT03_x"]+0.02, P["PT03_y"]+0.02, P["PT03_z"]+0.02)
+pt03_cer_obj = add_part(pt03_cer, "PT03_Encapsulado_Ceramico", (0.95,0.95,1.0,0.7),
+                        base=P["PT03_offset"] + App.Vector(-P["PT03_x"]/2.0-0.01, -P["PT03_y"]/2.0-0.01, -0.01), parent=grp_payload)
+# Amortiguadores internos (4 cilindros pequeños)
+damper_r = 0.015
+damper_h = 0.04
+for i, offs in enumerate([
+    App.Vector(+P["PT03_x"]/2.0 - 0.05, +P["PT03_y"]/2.0 - 0.05, 0.02),
+    App.Vector(-P["PT03_x"]/2.0 + 0.05, +P["PT03_y"]/2.0 - 0.05, 0.02),
+    App.Vector(+P["PT03_x"]/2.0 - 0.05, -P["PT03_y"]/2.0 + 0.05, 0.02),
+    App.Vector(-P["PT03_x"]/2.0 + 0.05, -P["PT03_y"]/2.0 + 0.05, 0.02),
+]):
+    damper = make_cyl(damper_r, damper_h)
+    add_part(damper, f"PT03_Amort_{i+1}", C["ss"], base=P["PT03_offset"] + offs, axis=App.Vector(1,0,0), ang=90.0, parent=grp_payload)
+
+# -------------------------------
+# 1) Antena HGA (Al 7075-T6 + recubrimiento dieléctrico)
+# -------------------------------
+
+hga = make_cyl(P["HGA_d"]/2.0, P["HGA_t"])
+hga_obj = add_part(hga, "HGA_Al7075", C["hga"], base=P["HGA_offset"], parent=grp_antennas)
+
+# Mástil desplegable con bisagras y actuadores (simplificados)
+mast = make_cyl(P["HGA_mast_d"]/2.0, P["HGA_mast_len"])
+mast_obj = add_part(mast, "HGA_Mast_Ti", C["ti"],
+                    base=P["HGA_offset"] + App.Vector(0,0,-P["HGA_mast_len"]), parent=grp_antennas)
+
+# Bisagra en la raíz del mástil
+hinge_mast = make_cyl(0.06, 0.12)
+hinge_mast_obj = add_part(hinge_mast, "HGA_Hinge", C["al"],
+                          base=P["HGA_offset"] + App.Vector(0,0,-P["HGA_mast_len"]-0.06),
+                          axis=App.Vector(1,0,0), ang=90.0, parent=grp_antennas)
+
+# Actuadores (dos cilindros delgados)
+act_len = 0.7
+act_d = 0.03
+for i, y in enumerate([+0.12, -0.12]):
+    act = make_cyl(act_d/2.0, act_len)
+    add_part(act, f"HGA_Act_{i+1}", C["al"],
+             base=P["HGA_offset"] + App.Vector(-0.3, y, -P["HGA_mast_len"]*0.6),
+             axis=App.Vector(0,1,0), ang=90.0, parent=grp_antennas)
+
+# -------------------------------
+# 2) Fan Beam Antenna (CFRP con honeycomb)
+# -------------------------------
+
+fan = make_cyl(P["FAN_d"]/2.0, P["FAN_t"])
+fan_obj = add_part(fan, "FanBeam_CFRP", C["fan"], base=P["FAN_offset"], parent=grp_antennas)
+# Soporte lateral rígido
+bracket = make_box(0.35, 0.08, 0.12)
+bracket_obj = add_part(bracket, "FanBeam_Soporte_Metal", C["al"],
+                       base=P["FAN_offset"] + App.Vector(-0.35, -0.04, -0.06), parent=grp_antennas)
+
+# -------------------------------
+# 6) Válvulas (Ti Gr5) sobre línea de propulsión (simplificado)
+# -------------------------------
+
+valve = make_cyl(P["VAL_d"]/2.0, P["VAL_L"])
+# Creamos 3 válvulas repartidas cerca del tanque
+for i, y in enumerate([-0.35, 0.0, +0.35]):
+    add_part(valve, f"Valve_{i+1}_TiGr5", C["ti"],
+             base=P["TANK_offset"] + App.Vector(P["TANK_d"]/2.0 + 0.15, y, -0.2),
+             axis=App.Vector(0,1,0), ang=90.0, parent=grp_prop)
+
+# -------------------------------
+# FEM: configuraciones básicas por componente
+# -------------------------------
+
+def make_analysis(name):
+    if not FEM_AVAILABLE:
+        return None, None
+    ana = doc.addObject("Fem::Analysis", f"Analysis_{name}")
+    try:
+        solver = doc.addObject("Fem::SolverCalculixCcxTools", f"Solver_{name}")
+        ana.addObject(solver)
+    except Exception:
+        solver = None
+    return ana, solver
+
+def add_self_weight(analysis, factor_g=1.0, name="SelfWeight"):
+    if not FEM_AVAILABLE:
+        return None
+    sw = doc.addObject("Fem::ConstraintSelfWeight", name)
+    sw.Gravity = App.Vector(0, 0, -P["g"] * factor_g)
+    analysis.addObject(sw)
+    return sw
+
+def add_pressure(analysis, obj, pressure_pa, name="Pressure"):
+    if not FEM_AVAILABLE:
+        return None
+    pr = doc.addObject("Fem::ConstraintPressure", name)
+    pr.Pressure = pressure_pa
+    pr.References = all_faces(obj)
+    analysis.addObject(pr)
+    return pr
+
+def add_temperature(analysis, obj, temp_C, name="Temperature"):
+    if not FEM_AVAILABLE:
+        return None
+    tt = doc.addObject("Fem::ConstraintTemperature", name)
+    tt.Temperature = float(temp_C)
+    tt.References = all_faces(obj)
+    analysis.addObject(tt)
+    return tt
+
+def add_heatflux(analysis, obj, flux_W_m2, name="HeatFlux"):
+    if not FEM_AVAILABLE:
+        return None
+    hf = doc.addObject("Fem::ConstraintHeatflux", name)
+    hf.HeatFlux = flux_W_m2
+    hf.References = all_faces(obj)
+    analysis.addObject(hf)
+    return hf
+
+# 1) HGA: vibración 6g + casos térmicos (-160 a +120 °C)
+ana_hga, _ = make_analysis("HGA")
+if ana_hga:
+    add_FEM_material(hga_obj, "Al_7075_T6", ana_hga)
+    add_self_weight(ana_hga, factor_g=6.0, name="HGA_6g")
+    add_temperature(ana_hga, hga_obj, -160.0, "HGA_Tmin")
+    add_temperature(ana_hga, hga_obj, +120.0, "HGA_Tmax")
+
+# 2) Fan Beam: térmico + flexión por torque (representado como fuerza lateral)
+ana_fan, _ = make_analysis("FanBeam")
+if ana_fan:
+    add_FEM_material(fan_obj, "CFRP_HC", ana_fan)
+    add_temperature(ana_fan, fan_obj, 60.0, "Fan_Top")
+    # Fuerza lateral equivalente (torque simplificado) — ajustar magnitud
+    force = doc.addObject("Fem::ConstraintForce", "Fan_Force_Lateral") if FEM_AVAILABLE else None
+    if force:
+        force.Force = 500.0  # N (placeholder)
+        force.Direction = App.Vector(1, 0, 0)
+        force.References = all_faces(fan_obj)
+        ana_fan.addObject(force)
+
+# 3) Exoesqueleto: carga de lanzamiento hasta 40 g
+ana_exo, _ = make_analysis("Exoesqueleto")
+if ana_exo:
+    add_FEM_material(exo_obj, "Ti_Gr5", ana_exo)
+    add_self_weight(ana_exo, factor_g=40.0, name="EXO_40g")
+
+# 4) Radiadores: disipación 1.2 kW (repartido a ambos) + térmico
+ana_rad, _ = make_analysis("Radiadores")
+if ana_rad:
+    add_FEM_material(rad_L, "Al_Anodizado", ana_rad)
+    add_FEM_material(rad_R, "Al_Anodizado", ana_rad)
+    # Flujo de calor: Q/A. Supongamos reparto equitativo y cara por ambas superficies.
+    Q_total = 1200.0  # W
+    A_rad = P["RAD_L"] * P["RAD_H"]
+    flux = (Q_total/2.0) / A_rad  # W/m2 por radiador
+    add_heatflux(ana_rad, rad_L, flux, "RadL_Q")
+    add_heatflux(ana_rad, rad_R, flux, "RadR_Q")
+    add_temperature(ana_rad, rad_L, 50.0, "RadL_T")
+    add_temperature(ana_rad, rad_R, 50.0, "RadR_T")
+
+# 5) PT03: vibraciones + choques térmicos
+ana_pt, _ = make_analysis("PT03")
+if ana_pt:
+    add_FEM_material(pt03_obj, "Al_7075_T6", ana_pt)
+    add_self_weight(ana_pt, factor_g=10.0, name="PT03_10g")
+    add_temperature(ana_pt, pt03_obj, -100.0, "PT03_Tmin")
+    add_temperature(ana_pt, pt03_obj, +90.0, "PT03_Tmax")
+
+# 6) Válvulas: presión de trabajo 2 MPa (aplicar al tanque/linea simplificada)
+ana_val, _ = make_analysis("Valvulas")
+if ana_val:
+    # Aplica presión a tanque como proxy de tubería (simplificación)
+    add_FEM_material(tank_obj, "Al_Li", ana_val)
+    add_pressure(ana_val, tank_obj, 2.0e6, "Valves_WorkPressure")
+
+# 7) Acumulador: presión interna 3 MPa, temperatura -150 a +50 °C
+ana_acc, _ = make_analysis("Acumulador")
+if ana_acc:
+    add_FEM_material(acc_obj, "SS_316L", ana_acc)
+    add_pressure(ana_acc, acc_obj, 3.0e6, "ACC_Pressure")
+    add_temperature(ana_acc, acc_obj, -150.0, "ACC_Tmin")
+    add_temperature(ana_acc, acc_obj, +50.0, "ACC_Tmax")
+
+# 8) Tanque: contención hidrazina 2.5 MPa
+ana_tank, _ = make_analysis("Tanque")
+if ana_tank:
+    add_FEM_material(tank_obj, "Al_Li", ana_tank)
+    add_pressure(ana_tank, tank_obj, 2.5e6, "Tank_Pressure")
+
+# 9) Propulsión: flujo/temperatura de gases 1500 °C (temperatura impuesta)
+ana_prop, _ = make_analysis("Propulsion")
+if ana_prop:
+    add_FEM_material(prop_obj, "WC_Carburo", ana_prop)
+    add_temperature(ana_prop, prop_obj, 1500.0, "Nozzle_Tgas")
+    # Revestimiento grafito como material térmico secundario
+    add_FEM_material(coat_obj, "GrafitoRef", ana_prop)
+
+# 10) Corona estructural: transmisión de esfuerzos (carga de montaje)
+ana_ring, _ = make_analysis("Corona")
+if ana_ring:
+    add_FEM_material(ring_obj, "Ti_Gr9", ana_ring)
+    add_self_weight(ana_ring, factor_g=5.0, name="Ring_Mount_Load")
+
+doc.recompute()
+
+print("Modelo creado: Sonda 'tipo Parker' con ensamblaje y análisis FEM (placeholders) listos.")
+if not FEM_AVAILABLE:
+    print("Aviso: Módulo FEM no disponible; se creó la geometría y el ensamblaje sin objetos FEM.")
