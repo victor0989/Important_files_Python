@@ -1,0 +1,371 @@
+# -*- coding: utf-8 -*-
+# Macro FreeCAD: Direct Fusion Drive - Enhanced TPS & Thermoelastic
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part, math
+
+DOC_NAME = "Direct_Fusion_Drive_Enhanced"
+if App.ActiveDocument is None or App.ActiveDocument.Label != DOC_NAME:
+    App.newDocument(DOC_NAME)
+doc = App.ActiveDocument
+
+# -------------------------
+# GLOBAL SCALE & TOLERANCES
+# -------------------------
+SCALE = 1.5
+EPS = 0.05 * SCALE             # pequeña separación anti-tangencia
+FILLETR = 12.0 * SCALE         # radio base para bordes
+CHAMFERR = 4.0 * SCALE         # chaflán técnico para aristas críticas
+
+# -------------------------
+# PARAMETROS PRINCIPALES
+# -------------------------
+P = {
+    # Fuselaje
+    "nose_len": 800.0 * SCALE, "nose_base_d": 600.0 * SCALE,
+    "mid_len": 1400.0 * SCALE, "mid_d": 900.0 * SCALE,
+    "rear_len": 800.0 * SCALE, "rear_d": 1200.0 * SCALE,
+    "hull_t": 10.0 * SCALE,
+
+    # Cabina y ventanas
+    "cockpit_w": 900.0 * SCALE, "cockpit_h": 400.0 * SCALE,
+    "cockpit_l": 600.0 * SCALE, "cockpit_x0": 600.0 * SCALE,
+    "win_w": 600.0 * SCALE, "win_h": 250.0 * SCALE, "win_th": 20.0 * SCALE,
+    "win_y_off": 0.5 * (900.0 * SCALE / 2.0 - 250.0 * SCALE / 2.0),
+    "win_z": 0.0,
+
+    # Reactor y moderador
+    "reactor_d": 800.0 * SCALE, "reactor_l": 900.0 * SCALE,
+    "reactor_cx": 2600.0 * SCALE,
+    "ring_h": 30.0 * SCALE, "ring_ro": 420.0 * SCALE, "ring_ri": 380.0 * SCALE,
+    "ring_n": 6, "ring_pitch": 150.0 * SCALE,
+    "coil_rect_w": 80.0 * SCALE, "coil_rect_h": 80.0 * SCALE,
+    "coil_R": 440.0 * SCALE, "coil_n": 4, "coil_span": 800.0 * SCALE,
+    "moderator_t": 100.0 * SCALE, "moderator_gap": 20.0 * SCALE, "moderator_over": 200.0 * SCALE,
+    "tungsten_post_t": 10.0 * SCALE,
+
+    # Tobera
+    "nozzle_throat_d": 300.0 * SCALE, "nozzle_exit_d": 900.0 * SCALE,
+    "nozzle_l": 700.0 * SCALE, "nozzle_cx": 2850.0 * SCALE, "nozzle_fillet_r": 40.0 * SCALE,
+
+    # Estructura/trusses y tanque
+    "truss_n": 3, "truss_tube_w": 80.0 * SCALE, "truss_R_attach": 550.0 * SCALE,
+    "tank_d": 300.0 * SCALE, "tank_l": 700.0 * SCALE,
+    "tank_cx": 1600.0 * SCALE, "tank_cy": 300.0 * SCALE, "tank_cz": -150.0 * SCALE,
+
+    # Patas
+    "leg_L_fold": 400.0 * SCALE, "leg_L_ext": 600.0 * SCALE, "leg_foot_d": 180.0 * SCALE,
+    "leg_side_x1": 1050.0 * SCALE, "leg_side_x2": 1950.0 * SCALE,
+    "leg_side_y": 600.0 * SCALE,
+    "leg_front_x": 400.0 * SCALE, "leg_front_y": 0.0,
+    "leg_front_z": -(900.0 * SCALE / 2.0) + 50.0 * SCALE,
+
+    # Alas/estabilizador
+    "wing_root_w": 600.0 * SCALE, "wing_tip_w": 150.0 * SCALE,
+    "wing_chord": 450.0 * SCALE, "fin_h": 400.0 * SCALE, "fin_base": 200.0 * SCALE,
+
+    # Radiadores
+    "rad_panel_w": 800.0 * SCALE, "rad_panel_h": 600.0 * SCALE, "rad_panel_n": 5,
+    "rad_tilt_deg": 20.0, "rad_shadow_margin": 120.0 * SCALE,
+
+    # Cápsula
+    "capsule_d": 500.0 * SCALE, "capsule_len": 600.0 * SCALE, "capsule_x0": 300.0 * SCALE,
+
+    # TPS/Blindaje
+    "tps_cc_t": 30.0 * SCALE,        # Carbon-Carbon
+    "tps_ceramic_t": 20.0 * SCALE,   # Cerámica
+    "tps_foam_t": 15.0 * SCALE,      # Foam
+    "tps_gap_t": 6.0 * SCALE,        # Junta técnica para expansión
+    "shield_seg_n": 7,               # subdivisión del escudo en pétalos
+    "shield_rim_w": 80.0 * SCALE,    # ancho del rim
+    "shield_rim_th": 40.0 * SCALE,   # espesor del rim
+    "shield_offset": 40.0 * SCALE,   # separación del escudo respecto al fuselaje
+}
+
+# -------------------------
+# VECTORES / ROTACIONES
+# -------------------------
+X_AXIS = App.Vector(1,0,0)
+Y_AXIS = App.Vector(0,1,0)
+Z_AXIS = App.Vector(0,0,1)
+
+def rot_to_x():
+    return App.Rotation(Y_AXIS, 90)
+
+# -------------------------
+# UTILIDADES GEOMETRICAS
+# -------------------------
+def add_obj(shape, label):
+    o = doc.addObject("Part::Feature", label)
+    o.Shape = shape
+    return o
+
+def mk_cyl_x(d, L, cx=0, cy=0, cz=0):
+    r = max(d/2.0, 0.1)
+    c = Part.makeCylinder(r, L)
+    c.Placement = App.Placement(App.Vector(float(cx)-L/2.0, float(cy), float(cz)), rot_to_x())
+    return c
+
+def mk_cone_x(d1, d2, L, cx=0, cy=0, cz=0):
+    r1 = max(d1/2.0, 0.1); r2 = max(d2/2.0, 0.1)
+    c = Part.makeCone(r1, r2, L)
+    c.Placement = App.Placement(App.Vector(float(cx)-L/2.0, float(cy), float(cz)), rot_to_x())
+    return c
+
+def mk_torus_x(R, r, cx=0, cy=0, cz=0):
+    t = Part.makeTorus(R, r)
+    t.Placement = App.Placement(App.Vector(float(cx), float(cy), float(cz)), rot_to_x())
+    return t
+
+def mk_box(w, d, h, cx=0, cy=0, cz=0):
+    b = Part.makeBox(w, d, h)
+    b.Placement = App.Placement(App.Vector(float(cx)-w/2.0, float(cy)-d/2.0, float(cz)-h/2.0), App.Rotation())
+    return b
+
+def mk_sphere(r, cx=0, cy=0, cz=0):
+    s = Part.makeSphere(r)
+    s.Placement = App.Placement(App.Vector(float(cx), float(cy), float(cz)), App.Rotation())
+    return s
+
+def safe_fuse(shapes):
+    s = None
+    for sh in shapes:
+        if s is None:
+            s = sh
+        else:
+            try:
+                s = s.fuse(sh)
+                s = s.removeSplitter()  # limpia aristas internas
+            except Exception:
+                # fallback: pequeño desplazamiento anti-tangencia
+                s = s.fuse(sh.translate(App.Vector(EPS, EPS, EPS)))
+    return s
+
+def make_shell_from_offset(solid, t):
+    try:
+        shell = solid.makeOffsetShape(-t, 0.01, join=2, fill=True)
+        return shell
+    except Exception:
+        # fallback robusto: thicken negativo con offset de caras si procede
+        return solid
+
+def fillet_all(shape, r):
+    try:
+        return shape.makeFillet(r, shape.Edges)
+    except Exception:
+        return shape
+
+def chamfer_all(shape, r):
+    try:
+        return shape.makeChamfer(r, shape.Edges)
+    except Exception:
+        return shape
+
+# -------------------------
+# ENSAMBLAJE PRINCIPAL
+# -------------------------
+parts = []
+
+# Fuselaje básico
+nose = mk_cone_x(P["nose_base_d"], 0.0, P["nose_len"], cx=P["nose_len"]/2.0)
+mid  = mk_cyl_x(P["mid_d"], P["mid_len"], cx=P["nose_len"] + P["mid_len"]/2.0)
+rear = mk_cyl_x(P["rear_d"], P["rear_len"], cx=P["nose_len"] + P["mid_len"] + P["rear_len"]/2.0)
+fuselage = safe_fuse([nose, mid, rear])
+hull_shell = make_shell_from_offset(fuselage, P["hull_t"])
+parts.append(hull_shell)
+
+# Ventanas simétricas (cortes)
+win1 = mk_box(P["win_w"], P["win_th"], P["win_h"],
+              cx=P["cockpit_x0"] + P["cockpit_l"]/2.0,
+              cy=(P["mid_d"]/2.0) - P["win_th"]/2.0,
+              cz=P["win_z"])
+win2 = mk_box(P["win_w"], P["win_th"], P["win_h"],
+              cx=P["cockpit_x0"] + P["cockpit_l"]/2.0,
+              cy=-(P["mid_d"]/2.0) + P["win_th"]/2.0,
+              cz=P["win_z"])
+hull_cut = hull_shell.cut(win1).cut(win2)
+add_obj(hull_cut, "Hull_Shell_Cut")
+
+# Cabina con fillet
+cockpit_box = Part.makeBox(P["cockpit_l"], P["cockpit_w"], P["cockpit_h"])
+cockpit_box.Placement = App.Placement(App.Vector(P["cockpit_x0"], -P["cockpit_w"]/2.0, -P["cockpit_h"]/2.0), App.Rotation())
+cockpit_sh = fillet_all(cockpit_box, 20.0 * SCALE)
+add_obj(cockpit_sh, "Cockpit")
+parts.append(cockpit_sh)
+
+# Reactor: cilindro + anillos + bobinas
+reactor = mk_cyl_x(P["reactor_d"], P["reactor_l"], cx=P["reactor_cx"])
+rings = []
+x0 = P["reactor_cx"] - P["reactor_l"]/2.0 + P["ring_h"]/2.0
+for i in range(int(P["ring_n"])):
+    x = x0 + i * P["ring_pitch"]
+    r = mk_torus_x((P["ring_ro"] + P["ring_ri"])/2.0, (P["ring_ro"] - P["ring_ri"])/2.0, cx=x)
+    rings.append(r)
+rings_sh = safe_fuse(rings)
+add_obj(rings_sh, "Reactor_Rings")
+
+# Bobinas en arco
+span = P["coil_span"]
+cx0 = P["reactor_cx"] - span/2.0
+coils = []
+for i in range(P["coil_n"]):
+    cx = cx0 + i * (span / max(1, (P["coil_n"] - 1)))
+    c = mk_cyl_x(P["coil_rect_w"], P["coil_rect_h"], cx=cx, cy=P["coil_R"], cz=0.0)
+    coils.append(c)
+coils_sh = safe_fuse(coils)
+add_obj(coils_sh, "Reactor_Coils")
+
+# Moderador y poste de tungsteno
+modL = P["reactor_l"] + 2.0 * P["moderator_over"]
+modD = P["reactor_d"] + 2.0 * (P["moderator_t"] + P["moderator_gap"])
+moderator = mk_cyl_x(modD, modL, cx=P["reactor_cx"])
+tung_post_len = P["reactor_l"] + 2.0 * P["tungsten_post_t"]
+tung_post_d   = P["reactor_d"] + 2.0 * P["tungsten_post_t"]
+tung_post = mk_cyl_x(tung_post_d, tung_post_len, cx=P["reactor_cx"] + EPS)  # leve offset anti-tangencia
+add_obj(moderator, "Moderator")
+add_obj(tung_post, "Tungsten_Post")
+parts.extend([reactor, moderator, tung_post])
+
+# Tobera con fillet
+noz = mk_cone_x(P["nozzle_throat_d"], P["nozzle_exit_d"], P["nozzle_l"], cx=P["nozzle_cx"])
+noz_f = fillet_all(noz, P["nozzle_fillet_r"])
+add_obj(noz_f, "Nozzle")
+parts.append(noz_f)
+
+# Trusses radiales (evita tangencia con offset)
+trusses = []
+for i in range(P["truss_n"]):
+    ang = 360.0 / P["truss_n"] * i
+    px = P["reactor_cx"] - P["reactor_l"]/4.0
+    py = P["truss_R_attach"] * math.cos(math.radians(ang))
+    pz = P["truss_R_attach"] * math.sin(math.radians(ang))
+    tr = mk_cyl_x(P["truss_tube_w"], P["reactor_l"]/2.0, cx=px, cy=py + EPS, cz=pz + EPS)
+    trusses.append(tr)
+truss_sh = safe_fuse(trusses)
+add_obj(truss_sh, "Truss_Array")
+parts.append(truss_sh)
+
+# Tanque lateral
+tank = mk_cyl_x(P["tank_d"], P["tank_l"], cx=P["tank_cx"], cy=P["tank_cy"], cz=P["tank_cz"])
+add_obj(tank, "Side_Tank")
+parts.append(tank)
+
+# Patas
+legF1 = mk_cyl_x(40.0 * SCALE, P["leg_L_fold"], cx=P["leg_front_x"], cy=P["leg_front_y"], cz=P["leg_front_z"])
+legF2 = mk_cyl_x(P["leg_foot_d"], 40.0 * SCALE, cx=P["leg_front_x"] + P["leg_L_fold"], cy=P["leg_front_y"], cz=P["leg_front_z"])
+legS1 = mk_cyl_x(40.0 * SCALE, P["leg_L_ext"], cx=P["leg_side_x1"], cy=P["leg_side_y"], cz=P["leg_front_z"])
+legS2 = mk_cyl_x(P["leg_foot_d"], 40.0 * SCALE, cx=P["leg_side_x1"] + P["leg_L_ext"], cy=P["leg_side_y"], cz=P["leg_front_z"])
+legS3 = mk_cyl_x(40.0 * SCALE, P["leg_L_ext"], cx=P["leg_side_x2"], cy=-P["leg_side_y"], cz=P["leg_front_z"])
+legS4 = mk_cyl_x(P["leg_foot_d"], 40.0 * SCALE, cx=P["leg_side_x2"] + P["leg_L_ext"], cy=-P["leg_side_y"], cz=P["leg_front_z"])
+legs_sh = safe_fuse([legF1, legF2, legS1, legS2, legS3, legS4])
+add_obj(legs_sh, "Legs")
+parts.append(legs_sh)
+
+# Alas y aleta
+wing1 = mk_box(P["wing_chord"], P["wing_root_w"], 40.0 * SCALE,
+               cx=P["mid_len"]*0.5, cy=P["mid_d"]/2.0 + P["wing_root_w"]/2.0 + EPS, cz=0.0)
+wing2 = mk_box(P["wing_chord"], P["wing_root_w"], 40.0 * SCALE,
+               cx=P["mid_len"]*0.5, cy=-(P["mid_d"]/2.0 + P["wing_root_w"]/2.0) - EPS, cz=0.0)
+fin1  = mk_box(P["fin_base"], 40.0 * SCALE, P["fin_h"],
+               cx=P["mid_len"]*0.9, cy=0.0, cz=P["fin_h"]/2.0)
+wings_sh = safe_fuse([wing1, wing2, fin1])
+add_obj(wings_sh, "Wings_Fin")
+parts.append(wings_sh)
+
+# Radiadores en sombra térmica
+rad_panels = []
+rear_cx = P["nose_len"] + P["mid_len"] + P["rear_len"]*0.5
+shadow_base = P["rear_d"]/2.0 + P["rad_shadow_margin"]
+tilt = P["rad_tilt_deg"]
+for i in range(P["rad_panel_n"]):
+    offz = -P["rear_d"]/4.0 + i * P["rad_panel_h"]
+    p = mk_box(P["rad_panel_w"], 40.0 * SCALE, P["rad_panel_h"],
+               cx=rear_cx, cy=shadow_base, cz=offz)
+    # pequeña inclinación para rechazo especular
+    p.Placement.Rotation = App.Rotation(App.Vector(0,0,1), tilt)
+    rad_panels.append(p)
+rad_sh = safe_fuse(rad_panels)
+add_obj(rad_sh, "Radiator_Panels")
+parts.append(rad_sh)
+
+# Cápsula
+capsule = mk_sphere(P["capsule_d"]/2.0, cx=P["capsule_x0"], cy=0.0, cz=0.0)
+add_obj(capsule, "Rescue_Capsule")
+parts.append(capsule)
+
+# -------------------------
+# TPS Y BLINDAJE SEGMENTADO
+# -------------------------
+# Rim anular
+rim_R = (P["nose_base_d"]/2.0) + P["shield_offset"]
+rim = mk_torus_x(rim_R, P["shield_rim_th"]/2.0, cx=P["nose_len"]*0.05)
+rim_box = mk_box(P["shield_rim_w"], P["shield_rim_w"], P["shield_rim_th"],
+                 cx=P["nose_len"]*0.05, cy=0.0, cz=0.0)
+rim_sh = safe_fuse([rim, rim_box])
+rim_sh = chamfer_all(rim_sh, CHAMFERR)
+add_obj(rim_sh, "Shield_Rim")
+parts.append(rim_sh)
+
+# Cono de escudo base (soporte)
+shield_base = mk_cone_x(P["nose_base_d"] + 2.0*P["shield_offset"],
+                        P["mid_d"] + 2.0*P["shield_offset"],
+                        P["nose_len"]*0.9,
+                        cx=P["nose_len"]*0.45)
+# Segmentación en pétalos con holguras
+shield_petals = []
+segN = max(3, int(P["shield_seg_n"]))
+for i in range(segN):
+    ang0 = (360.0/segN) * i + EPS*2.0
+    ang1 = ang0 + (360.0/segN) - EPS*4.0
+    # corte sectorial
+    sector = Part.makeCylinder(2000.0 * SCALE, 2000.0 * SCALE)
+    sector.Placement = App.Placement(App.Vector(P["nose_len"]*0.45, 0, 0), rot_to_x())
+    # usa wedge polar aproximado: rotación para sector angular
+    # simplificación: caja rotada para cortar el segmento
+    cut_box = mk_box(2200.0 * SCALE, 2200.0 * SCALE, 2200.0 * SCALE,
+                     cx=P["nose_len"]*0.45, cy=0.0, cz=0.0)
+    cut_box.Placement.Rotation = App.Rotation(Z_AXIS, ang0)
+    petal = shield_base.cut(cut_box)
+    petal = fillet_all(petal, FILLETR)
+    shield_petals.append(petal)
+
+shield_sh = safe_fuse(shield_petals)
+add_obj(shield_sh, "Shield_Segmented")
+parts.append(shield_sh)
+
+# Capas TPS sobre el escudo y el fuselaje frontal
+tps_total = P["tps_cc_t"] + P["tps_ceramic_t"] + P["tps_foam_t"] + P["tps_gap_t"]
+
+# Shell CC
+shield_cc = make_shell_from_offset(shield_sh, -P["tps_cc_t"])
+add_obj(shield_cc, "TPS_CC")
+# Shell Cerámica
+shield_cer = make_shell_from_offset(shield_cc, -P["tps_ceramic_t"])
+add_obj(shield_cer, "TPS_Ceramic")
+# Foam (expansión, se retrasa para crear gap)
+shield_gap = make_shell_from_offset(shield_cer, -P["tps_gap_t"])
+add_obj(shield_gap, "TPS_Gap")
+shield_foam = make_shell_from_offset(shield_gap, -P["tps_foam_t"])
+add_obj(shield_foam, "TPS_Foam")
+
+# TPS frontal sobre fuselaje (nariz y mid anterior)
+front_zone = mk_cone_x(P["nose_base_d"], P["mid_d"], P["nose_len"]*0.6, cx=P["nose_len"]*0.3)
+front_cc = make_shell_from_offset(front_zone, -P["tps_cc_t"])
+front_cer = make_shell_from_offset(front_cc, -P["tps_ceramic_t"])
+front_gap = make_shell_from_offset(front_cer, -P["tps_gap_t"])
+front_foam = make_shell_from_offset(front_gap, -P["tps_foam_t"])
+add_obj(safe_fuse([front_cc, front_cer, front_gap, front_foam]), "TPS_Front_Stack")
+
+# -------------------------
+# FUSION FINAL (OPCIONAL)
+# -------------------------
+# Para modelos imprimibles, a veces conviene mantener subsistemas separados.
+# Si deseas un sólido único manifold, activa la fusión final:
+fuse_all = False
+if fuse_all:
+    master = safe_fuse(parts)
+    master = master.removeSplitter()
+    master = fillet_all(master, FILLETR/2.0)
+    add_obj(master, "DFD_Enhanced_Manifold")
+
+doc.recompute()

@@ -1,0 +1,283 @@
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import Draft
+import math
+
+doc = App.newDocument("Nave_FEM_Corregida")
+
+MM3_TO_M3 = 1e-9
+
+# ----------------------------
+# Parámetros globales (mm, kg/m^3)
+# ----------------------------
+rho = {
+    "Ti64": 4500.0,
+    "Inconel": 8470.0,
+    "W": 19250.0,
+    "CompCarbono": 1600.0,
+    "PolyH2": 1000.0,
+    "NbCoil": 8000.0,
+    "Al7075": 2810.0,
+    "GrafenoComp": 1800.0,  # valor medio
+    "LH2": 71.0
+}
+
+def tag(obj, material, density):
+    obj.addProperty("App::PropertyString","Material","Meta","").Value = material
+    obj.addProperty("App::PropertyFloat","Density","Meta","kg/m^3").Value = float(density)
+
+def mass(obj):
+    return obj.Shape.Volume * MM3_TO_M3 * getattr(obj, "Density", 0.0)
+
+def fuse_all(objs, name):
+    sh = objs[0].Shape
+    for o in objs[1:]:
+        sh = sh.fuse(o.Shape)
+    o = doc.addObject("Part::Feature", name)
+    o.Shape = sh
+    return o
+
+# ----------------------------
+# Fuselaje: nariz cono, medio cilindro, cola cilindro (shell 10 mm)
+# ----------------------------
+shell_t = 10.0
+
+# Nariz
+nose_L, nose_R_base = 800.0, 300.0
+nose_outer = Part.makeCone(0.0, nose_R_base, nose_L); nose_outer.Placement.Base.x = 0.0
+nose_inner = Part.makeCone(0.0, max(nose_R_base - shell_t,0), nose_L - 0.0); nose_inner.Placement.Base.x = 0.0
+nose_shell = nose_outer.cut(nose_inner)
+nose_obj = doc.addObject("Part::Feature","Fuselaje_Nariz"); nose_obj.Shape = nose_shell; tag(nose_obj,"Ti-6Al-4V",rho["Ti64"])
+
+# Medio
+mid_L, mid_R = 1400.0, 450.0
+mid_outer = Part.makeCylinder(mid_R, mid_L); mid_outer.Placement.Base.x = 800.0
+mid_inner = Part.makeCylinder(mid_R - shell_t, mid_L); mid_inner.Placement.Base.x = 800.0
+mid_shell = mid_outer.cut(mid_inner)
+mid_obj = doc.addObject("Part::Feature","Fuselaje_Medio"); mid_obj.Shape = mid_shell; tag(mid_obj,"Ti-6Al-4V",rho["Ti64"])
+
+# Cola / motor bay
+rear_L, rear_R = 800.0, 600.0
+rear_outer = Part.makeCylinder(rear_R, rear_L); rear_outer.Placement.Base.x = 2200.0
+rear_inner = Part.makeCylinder(rear_R - shell_t, rear_L); rear_inner.Placement.Base.x = 2200.0
+rear_shell = rear_outer.cut(rear_inner)
+rear_obj = doc.addObject("Part::Feature","Fuselaje_Cola"); rear_obj.Shape = rear_shell; tag(rear_obj,"Ti-6Al-4V",rho["Ti64"])
+
+# Ensamble fuselaje para visualización
+fuselaje = fuse_all([nose_obj, mid_obj, rear_obj], "Fuselaje_Shell_Ti")
+
+# ----------------------------
+# Cabina: caja redondeada L=600, W=900, H=400 en X=600–1200, fillet 20
+# ----------------------------
+cab_L, cab_W, cab_H = 600.0, 900.0, 400.0
+cab = Part.makeBox(cab_L, cab_W, cab_H)
+# Centrar en Y/Z respecto al fuselaje (Y=0 plano medio, Z=0 eje)
+cab.Placement.Base = App.Vector(600.0, -cab_W/2.0, -cab_H/2.0)
+cab_shp = cab.makeFillet(20.0, cab.Edges)
+cab_obj = doc.addObject("Part::Feature","Cabina_Comp")
+cab_obj.Shape = cab_shp; tag(cab_obj,"Compuesto carbono",rho["CompCarbono"])
+
+# ----------------------------
+# Reactor DFD: Ø800, L=900, centro X=2600
+# ----------------------------
+react_R, react_L, react_xc = 400.0, 900.0, 2600.0
+react = Part.makeCylinder(react_R, react_L)
+react.Placement.Base = App.Vector(react_xc - react_L/2.0, 0.0, -react_R)
+react_obj = doc.addObject("Part::Feature","Reactor_DFD"); react_obj.Shape = react
+tag(react_obj,"Estructura reactor (Inconel/Ti)",rho["Inconel"])
+
+# ----------------------------
+# Blindaje moderador: cilindro hueco t=100 con gap 20, cubre ±100 mm
+# ----------------------------
+mod_t, gap = 100.0, 20.0
+mod_Ri = react_R + gap
+mod_Ro = mod_Ri + mod_t
+mod_L = react_L + 200.0
+mod_base_x = react_xc - mod_L/2.0
+mod_outer = Part.makeCylinder(mod_Ro, mod_L); mod_outer.Placement.Base.x = mod_base_x
+mod_inner = Part.makeCylinder(mod_Ri, mod_L); mod_inner.Placement.Base.x = mod_base_x
+mod_shell = mod_outer.cut(mod_inner)
+mod_obj = doc.addObject("Part::Feature","Blindaje_Moderador")
+mod_obj.Shape = mod_shell; tag(mod_obj,"Polímero rico en H2",rho["PolyH2"])
+
+# ----------------------------
+# Reactor rings: 6 toros, Rint=380, Rext=420, H=30 (aprox: toro con radio mayor=400, menor=15)
+# pitch 150 mm a lo largo de X centrado en reactor
+# ----------------------------
+rings = []
+R_int, R_ext, Hax = 380.0, 420.0, 30.0
+r_major = (R_int + R_ext)/2.0  # 400
+r_minor = (R_ext - R_int)/2.0  # 20 --> usaremos 15 para aspecto "H=30 aprox"
+r_minor_eff = 15.0
+pitch = 150.0
+x0 = react_xc - ( (5/2.0)*pitch )  # distribuir 6 anillos alrededor del centro
+for i in range(6):
+    tor = Part.makeTorus(r_major, r_minor_eff)
+    tor.Placement.Base = App.Vector(x0 + i*pitch, 0.0, 0.0)
+    # Orientar el toro alrededor del eje X (anillo rodeando el cilindro)
+    tor.Placement.Rotation = App.Rotation(App.Vector(0,1,0), 90)
+    o = doc.addObject("Part::Feature", f"Reactor_Ring_{i+1}")
+    o.Shape = tor; tag(o,"Inconel/Ti",rho["Inconel"])
+    rings.append(o)
+
+# ----------------------------
+# Reactor coils: sweep toroidal sección 80x80, Rmedio=440, 4 uds a lo largo de 800 mm
+# ----------------------------
+def toroidal_sweep_square(r_major, side, x_center):
+    # Crea un sweep rectangular de lado "side" alrededor de un camino circular de radio r_major
+    # Camino en plano YZ, centrado en X=x_center
+    path = Part.makeCircle(r_major, App.Vector(x_center,0,0), App.Vector(1,0,0))
+    prof = Part.makeRectangle(side, side)
+    # centrar perfil en (0,r_major,0) local del círculo: colocamos en Y=r_major
+    prof.Placement.Base = App.Vector(x_center, -side/2.0, -side/2.0 + r_major)
+    # Reorientar perfil perpendicular al círculo (plano YZ)
+    prof.Placement.Rotation = App.Rotation(App.Vector(0,1,0), 90)
+    sweep = prof.makePipeShell([path], True, True)
+    return sweep
+
+coil_side, coil_Rm = 80.0, 440.0
+coil_span = 800.0
+coil_x0 = react_xc - coil_span/2.0
+coil_pitch = coil_span/3.0  # 4 unidades: 0,1,2,3
+coils = []
+for i in range(4):
+    xc = coil_x0 + i*coil_pitch
+    shp = toroidal_sweep_square(coil_Rm, coil_side, xc)
+    o = doc.addObject("Part::Feature", f"Coil_{i+1}")
+    o.Shape = shp; tag(o,"Nb3Sn/NbTi",rho["NbCoil"])
+    coils.append(o)
+
+# ----------------------------
+# Boquilla magnética: cono truncado, L=700, throat Ø=300, exit Ø=900, Xc=2850, fillet 40
+# ----------------------------
+noz_L, R_th, R_ex, noz_xc = 700.0, 150.0, 450.0, 2850.0
+# Modelamos como frustum alineado en X; FreeCAD hace cones en +Z por defecto, así que usamos un loft entre círculos
+sec1 = Part.makeCircle(R_th, App.Vector(noz_xc - noz_L/2.0, 0, 0), App.Vector(1,0,0))
+sec2 = Part.makeCircle(R_ex, App.Vector(noz_xc + noz_L/2.0, 0, 0), App.Vector(1,0,0))
+wire1 = Part.Wire([sec1.toShape().Edges[0]])
+wire2 = Part.Wire([sec2.toShape().Edges[0]])
+noz_shp = Part.makeLoft([wire1, wire2], True)
+# Engrosar a pared fina opcional: aquí sólido directo; añadimos fillet en el borde de salida
+noz_obj = doc.addObject("Part::Feature","Boquilla_Magnetica")
+noz_obj.Shape = noz_shp.makeFillet(40.0, noz_shp.Edges[-1:])
+tag(noz_obj,"Inconel/Ti",rho["Inconel"])
+
+# ----------------------------
+# Tungsten ring: cilindro hueco t=10 radial posterior a tobera
+# ----------------------------
+W_t = 10.0
+W_Ri = R_ex
+W_Ro = R_ex + W_t
+W_L = 20.0
+W_x = noz_xc + noz_L/2.0  # salida tobera
+W_outer = Part.makeCylinder(W_Ro, W_L); W_outer.Placement.Base.x = W_x
+W_inner = Part.makeCylinder(W_Ri, W_L); W_inner.Placement.Base.x = W_x
+W_ring = W_outer.cut(W_inner)
+W_obj = doc.addObject("Part::Feature","Tungsten_Ring"); W_obj.Shape = W_ring; tag(W_obj,"W",rho["W"])
+
+# ----------------------------
+# Tanques combustibles: 2x cilindros Ø300 L=700 en X=1600, Y=±300, Z=-150
+# ----------------------------
+tank_R, tank_L = 150.0, 700.0
+tank_x = 1600.0
+tank_yoff, tank_z = 300.0, -150.0
+tanks = []
+for s in (-1, 1):
+    cy = Part.makeCylinder(tank_R, tank_L)
+    cy.Placement.Base = App.Vector(tank_x - tank_L/2.0, s*tank_yoff - tank_R, tank_z)
+    o = doc.addObject("Part::Feature", f"Tanque_{'L' if s<0 else 'R'}"); o.Shape = cy
+    tag(o,"Al7075 + LH2",rho["Al7075"])
+    tanks.append(o)
+
+# ----------------------------
+# Tren de aterrizaje: telescópico simple (3 unidades)
+# ----------------------------
+def leg(x_pos, y_pos, z_pos, L_fold=400.0, foot_d=180.0):
+    shaft_R = 50.0
+    shaft = Part.makeCylinder(shaft_R, L_fold)
+    shaft.Placement.Base = App.Vector(x_pos, y_pos, z_pos)
+    foot = Part.makeCylinder(foot_d/2.0, 30.0)
+    foot.Placement.Base = App.Vector(x_pos, y_pos, z_pos - 30.0)
+    comp = shaft.fuse(foot)
+    obj = doc.addObject("Part::Feature", f"Tren_{'F' if x_pos<600 else 'L' if y_pos<0 else 'R'}")
+    obj.Shape = comp; tag(obj,"Ti-6Al-4V",rho["Ti64"])
+    return obj
+
+tren = []
+tren.append(leg(400.0, 0.0, -600.0))        # frontal
+tren.append(leg(1050.0, -450.0, -600.0))    # lateral izq
+tren.append(leg(1950.0, 450.0, -600.0))     # lateral dcha
+
+# ----------------------------
+# Ala central: trapezoide extruida (raíz 600, punta 150, cuerda 450), grosor 20
+# ----------------------------
+def wing_trapezoid(x_le, chord, root, tip, thickness, span_y):
+    # Perfil plano en plano XZ, extruir en ±Y
+    z0 = 0.0
+    p1 = App.Vector(x_le, 0, z0)
+    p2 = App.Vector(x_le + chord, 0, z0)
+    p3 = App.Vector(x_le + chord - (root - tip), 0, z0 + tip)
+    p4 = App.Vector(x_le, 0, z0 + root)
+    w = Part.makePolygon([p1,p2,p3,p4,p1])
+    face = Part.Face(w)
+    solid = face.extrude(App.Vector(0, span_y, 0))
+    # espesor ala (20 mm) aproximado: extrusión delgada ya es el espesor; dejaremos thickness como detalle visual
+    return solid
+
+wing = wing_trapezoid(1300.0, 450.0, 600.0, 150.0, 20.0, 40.0)  # span_y pequeño (panel), ala central integrada
+wing = wing.makeFillet(5.0, wing.Edges)
+wing_obj = doc.addObject("Part::Feature","Ala_Central")
+wing_obj.Shape = wing; tag(wing_obj,"Compuesto/grafeno",rho["GrafenoComp"])
+
+# ----------------------------
+# Empeñaje vertical: triángulo extruido, grosor 20, X≈2800
+# ----------------------------
+tail_base_x = 2800.0
+p1 = App.Vector(tail_base_x, 0, 0)
+p2 = App.Vector(tail_base_x + 200.0, 0, 0)
+p3 = App.Vector(tail_base_x, 0, 400.0)
+tri = Part.makePolygon([p1,p2,p3,p1])
+tail_face = Part.Face(tri)
+tail = tail_face.extrude(App.Vector(0, 20.0, 0))
+tail_obj = doc.addObject("Part::Feature","Empennage_V")
+tail_obj.Shape = tail; tag(tail_obj,"Compuesto/grafeno",rho["GrafenoComp"])
+
+# ----------------------------
+# Radiadores: 5 paneles 800×600×10 laterales
+# ----------------------------
+rads = []
+rad_Lx, rad_Lz, rad_t = 800.0, 600.0, 10.0
+rad_xs = [900, 1100, 1300, 1500, 1700]
+for i, rx in enumerate(rad_xs):
+    box = Part.makeBox(rad_Lx, rad_t, rad_Lz)
+    box.Placement.Base = App.Vector(rx, 600.0, -rad_Lz/2.0)
+    o = doc.addObject("Part::Feature", f"Radiador_{i+1}")
+    o.Shape = box; tag(o,"Grafeno composite",rho["GrafenoComp"])
+    rads.append(o)
+
+# ----------------------------
+# Cálculo rápido de masa y COM
+# ----------------------------
+objs_mass = [fuselaje, cab_obj, react_obj, mod_obj, noz_obj, W_obj] + rings + coils + tanks + tren + [wing_obj, tail_obj] + rads
+total_mass = 0.0
+momX = momY = momZ = 0.0
+for o in objs_mass:
+    m = mass(o)
+    c = o.Shape.CenterOfMass  # mm
+    total_mass += m
+    momX += m * (c.x/1000.0)
+    momY += m * (c.y/1000.0)
+    momZ += m * (c.z/1000.0)
+
+COMx = (momX/total_mass)*1000.0 if total_mass>0 else 0.0
+COMy = (momY/total_mass)*1000.0 if total_mass>0 else 0.0
+COMz = (momZ/total_mass)*1000.0 if total_mass>0 else 0.0
+
+info = doc.addObject("App::FeaturePython","Resumen_Masas_COM")
+info.addProperty("App::PropertyFloat","Masa_total_kg","Mass","").Value = total_mass
+info.addProperty("App::PropertyVector","COM_mm","Mass","").Value = App.Vector(COMx, COMy, COMz)
+
+App.ActiveDocument.recompute()
+Gui.ActiveDocument.ActiveView.fitAll()
+print(f"MASA TOTAL ≈ {total_mass:.1f} kg | COM ≈ ({COMx:.0f}, {COMy:.0f}, {COMz:.0f}) mm")

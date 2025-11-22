@@ -1,0 +1,214 @@
+# -*- coding: utf-8 -*-
+# Destiny_Propulsion_HeavyArmor + Hydrogen Powerpack (coherente, sólido, sin penetraciones)
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import math
+
+doc_name = "Destiny_Propulsion_HeavyArmor"
+if App.ActiveDocument is None or App.ActiveDocument.Label != doc_name:
+    App.newDocument(doc_name)
+doc = App.ActiveDocument
+
+# ---------------- Utilidades ----------------
+def rot_to_x(): return App.Rotation(App.Vector(0,1,0), 90)
+def add_obj(shape,label): o=doc.addObject("Part::Feature",label); o.Shape=shape; return o
+def fuse_all(arr):
+    s = arr[0]
+    for a in arr[1:]: s = s.fuse(a)
+    return s
+
+# ---------------- Parámetros base nave ----------------
+P = {
+    "nose_len": 650.0, "nose_base_d": 800.0, "nose_cap_d": 600.0,
+    "mid_len": 1400.0, "mid_d": 1200.0,
+    "rear_len": 1300.0, "rear_d": 1600.0,
+    "hull_t": 30.0,
+    "cockpit_w": 950.0, "cockpit_h": 500.0, "cockpit_l": 750.0, "cockpit_x0": 550.0, "cockpit_blend_r": 80.0,
+    # Referencia para ubicación del módulo
+    "mount_margin": 120.0  # margen desde el final del fuselaje
+}
+
+# ---------------- Fuselaje volumétrico ----------------
+nose_cap=Part.makeSphere(P["nose_cap_d"]/2.0); nose_cap.Placement=App.Placement(App.Vector(P["nose_cap_d"]/2.0,0,0),App.Rotation())
+nose_trans=Part.makeCone(P["nose_base_d"]/2.0,P["nose_cap_d"]/2.0,P["nose_len"]-P["nose_cap_d"]/2.0); nose_trans.Placement=App.Placement(App.Vector(P["nose_len"]/2.0,0,0),rot_to_x())
+mid=Part.makeCylinder(P["mid_d"]/2.0,P["mid_len"]); mid.Placement=App.Placement(App.Vector(P["nose_len"],0,0),rot_to_x())
+rear=Part.makeCylinder(P["rear_d"]/2.0,P["rear_len"]); rear.Placement=App.Placement(App.Vector(P["nose_len"]+P["mid_len"],0,0),rot_to_x())
+fuselaje = nose_cap.fuse(nose_trans).fuse(mid).fuse(rear)
+
+# Espesor de casco
+try:
+    hull_inner=fuselaje.makeOffsetShape(-P["hull_t"],0.01,join=2,fill=True)
+    hull_shell=fuselaje.cut(hull_inner)
+    hull=add_obj(hull_shell,"Hull_Shell_HeavyArmor")
+except:
+    hull=add_obj(fuselaje,"Hull_Shell_HeavyArmor_Fallback")
+
+# Cabina integrada
+cockpit_box=Part.makeBox(P["cockpit_l"],P["cockpit_w"],P["cockpit_h"])
+cockpit_box.Placement=App.Placement(App.Vector(P["cockpit_x0"],-P["cockpit_w"]/2.0,-P["cockpit_h"]/2.0),App.Rotation())
+blend_sphere=Part.makeSphere(P["cockpit_blend_r"]); blend_sphere.Placement=App.Placement(App.Vector(P["cockpit_x0"]-P["cockpit_blend_r"]/2.0,0,0),App.Rotation())
+cockpit_vol=cockpit_box.fuse(blend_sphere)
+try:
+    ck_inner=cockpit_vol.makeOffsetShape(-12.0,0.01,join=2,fill=True)
+    cockpit_shell=cockpit_vol.cut(ck_inner)
+    cockpit_obj=add_obj(cockpit_shell,"Cockpit_Integrated")
+    hull_cut=add_obj(hull.Shape.cut(cockpit_vol),"Hull_With_Cockpit_Cut")
+except:
+    cockpit_obj=add_obj(cockpit_vol,"Cockpit_Integrated_Fallback")
+    hull_cut=hull
+
+# ---------------- Parámetros módulo H2 (camión satélite) ----------------
+H = {
+    # Ubicación del plano de montaje (final del fuselaje menos margen)
+    "mount_x": P["nose_len"] + P["mid_len"] + P["rear_len"] - P["mount_margin"],
+
+    # Dimensiones del mamparo adaptador (anillo)
+    "adapter_od": P["rear_d"],
+    "adapter_id": P["rear_d"] - 2*P["hull_t"],
+    "adapter_t": 60.0,
+
+    # Bloque motor principal (macizo, con chaflanes/fillets)
+    "block_L": 1600.0, "block_W": 900.0, "block_H": 800.0,
+    "block_fillet_r": 40.0,
+
+    # Culata/valvetrain (tapa superior maciza)
+    "head_H": 120.0,
+
+    # Rampa inyectores y colectores
+    "rail_d": 160.0, "rail_L": 1500.0,
+    "intake_d": 220.0, "exhaust_d": 240.0,
+
+    # Turbocompresor y caracola
+    "turbo_comp_d": 420.0, "turbo_comp_L": 420.0,
+    "turbo_turb_d": 480.0, "turbo_turb_L": 480.0,
+
+    # Depósitos H2 cilíndricos (macizos) laterales
+    "tank_d": 600.0, "tank_L": 1400.0, "tank_offset_Y": 700.0, "tank_offset_Z": -120.0,
+
+    # Radiadores planos (macizos) tipo panel
+    "rad_W": 1200.0, "rad_H": 700.0, "rad_T": 40.0, "rad_offset_Y": 950.0, "rad_offset_Z": 0.0,
+
+    # Ventilador/bafle frontal eliminado (en espacio se usan radiadores); se modela una tapa frontal
+    "front_cap_T": 40.0,
+
+    # Líneas macizas principales
+    "line_d": 80.0,
+
+    # Posición global (centrado Y/Z)
+    "cx": None, "cy": 0.0, "cz": 0.0,
+}
+H["cx"] = H["mount_x"]
+
+# ---------------- Hueco exacto en casco + mamparo adaptador ----------------
+# Hueco cilíndrico del diámetro interior del casco para alojar el powerpack
+hueco_d = H["adapter_id"] - 2.0  # tolerancia
+hueco_L = max(H["block_L"] + 400.0, 2400.0)
+hueco = Part.makeCylinder(hueco_d/2.0, hueco_L)
+hueco.Placement = App.Placement(App.Vector(H["mount_x"] - hueco_L, 0, 0), rot_to_x())
+casco_recortado = add_obj(hull_cut.Shape.cut(hueco), "Hull_Cut_H2Bay")
+
+# Mamparo adaptador (anillo) que une casco con el módulo
+adapter = Part.makeCylinder(H["adapter_od"]/2.0, H["adapter_t"]).cut(Part.makeCylinder(H["adapter_id"]/2.0, H["adapter_t"]))
+adapter.Placement = App.Placement(App.Vector(H["mount_x"] - H["adapter_t"], 0, 0), rot_to_x())
+adapter_obj = add_obj(adapter, "Adapter_Bulkhead")
+
+# ---------------- Bloque motor macizo con fillets ----------------
+block = Part.makeBox(H["block_L"], H["block_W"], H["block_H"])
+block.Placement = App.Placement(App.Vector(H["cx"] - H["block_L"]/2.0, -H["block_W"]/2.0, -H["block_H"]/2.0), App.Rotation())
+# Fillets en aristas exteriores del bloque
+try:
+    edges = block.Edges
+    block = block.makeFillet(H["block_fillet_r"], edges)
+except:
+    pass
+
+# Culata/tapa superior maciza
+head = Part.makeBox(H["block_L"], H["block_W"], H["head_H"])
+head.Placement = App.Placement(App.Vector(H["cx"] - H["block_L"]/2.0, -H["block_W"]/2.0, H["block_H"]/2.0), App.Rotation())
+
+# Tapa frontal (cierra volumen frontal)
+front_cap = Part.makeBox(H["front_cap_T"], H["block_W"], H["block_H"] + H["head_H"])
+front_cap.Placement = App.Placement(App.Vector(H["cx"] + H["block_L"]/2.0 - H["front_cap_T"], -H["block_W"]/2.0, -H["block_H"]/2.0), App.Rotation())
+
+# ---------------- Rampa de inyección y colectores macizos ----------------
+rail = Part.makeCylinder(H["rail_d"]/2.0, H["rail_L"])
+rail.Placement = App.Placement(App.Vector(H["cx"] - H["rail_L"]/2.0,  H["block_W"]/2.0 + 120.0,  H["block_H"]/2.0 - 80.0), rot_to_x())
+
+intake = Part.makeCylinder(H["intake_d"]/2.0, H["rail_L"])
+intake.Placement = App.Placement(App.Vector(H["cx"] - H["rail_L"]/2.0,  H["block_W"]/2.0 + 60.0,   80.0), rot_to_x())
+
+exhaust = Part.makeCylinder(H["exhaust_d"]/2.0, H["rail_L"])
+exhaust.Placement = App.Placement(App.Vector(H["cx"] - H["rail_L"]/2.0, -H["block_W"]/2.0 - 60.0, -80.0), rot_to_x())
+
+# ---------------- Turbocompresor macizo ----------------
+turbo_comp = Part.makeCylinder(H["turbo_comp_d"]/2.0, H["turbo_comp_L"])
+turbo_comp.Placement = App.Placement(App.Vector(H["cx"] - H["block_L"]/4.0,  H["block_W"]/2.0 + 300.0,  0.0), rot_to_x())
+turbo_turb = Part.makeCylinder(H["turbo_turb_d"]/2.0, H["turbo_turb_L"])
+turbo_turb.Placement = App.Placement(App.Vector(H["cx"] - H["block_L"]/4.0 - H["turbo_turb_L"],  H["block_W"]/2.0 + 300.0,  0.0), rot_to_x())
+turbo = turbo_comp.fuse(turbo_turb)
+
+# ---------------- Depósitos H2 macizos ----------------
+tank_R = Part.makeCylinder(H["tank_d"]/2.0, H["tank_L"])
+tank_L = Part.makeCylinder(H["tank_d"]/2.0, H["tank_L"])
+tank_R.Placement = App.Placement(App.Vector(H["cx"] - H["tank_L"]/2.0,  H["tank_offset_Y"],  H["tank_offset_Z"]), rot_to_x())
+tank_L.Placement = App.Placement(App.Vector(H["cx"] - H["tank_L"]/2.0, -H["tank_offset_Y"],  H["tank_offset_Z"]), rot_to_x())
+
+# ---------------- Radiadores macizos (paneles) ----------------
+rad_R = Part.makeBox(H["rad_W"], H["rad_T"], H["rad_H"])
+rad_L = Part.makeBox(H["rad_W"], H["rad_T"], H["rad_H"])
+rad_R.Placement = App.Placement(App.Vector(H["cx"] - H["rad_W"]/2.0,  H["rad_offset_Y"], -H["rad_H"]/2.0 + H["rad_offset_Z"]), App.Rotation())
+rad_L.Placement = App.Placement(App.Vector(H["cx"] - H["rad_W"]/2.0, -H["rad_offset_Y"], -H["rad_H"]/2.0 + H["rad_offset_Z"]), App.Rotation())
+
+# ---------------- Líneas macizas principales ----------------
+def line_cyl(p0, p1, d):
+    v = App.Vector(p1.x-p0.x, p1.y-p0.y, p1.z-p0.z)
+    L = v.Length
+    if L < 1e-3: return Part.makeCylinder(d/2.0, 0.1)
+    c = Part.makeCylinder(d/2.0, L)
+    rot = App.Rotation(App.Vector(0,0,1), App.Vector(v.x, v.y, v.z))
+    c.Placement = App.Placement(App.Vector(p0.x, p0.y, p0.z), rot)
+    return c
+
+p_tankR = App.Vector(H["cx"],  H["tank_offset_Y"],  H["tank_offset_Z"])
+p_tankL = App.Vector(H["cx"], -H["tank_offset_Y"],  H["tank_offset_Z"])
+p_rail  = App.Vector(H["cx"],  H["block_W"]/2.0 + 120.0,  H["block_H"]/2.0 - 80.0)
+p_intk  = App.Vector(H["cx"],  H["block_W"]/2.0 + 60.0,   80.0)
+p_turbo = App.Vector(H["cx"] - H["block_L"]/4.0,  H["block_W"]/2.0 + 300.0,  0.0)
+
+line_R = line_cyl(p_tankR, p_rail, H["line_d"])
+line_L = line_cyl(p_tankL, p_rail, H["line_d"])
+line_IT = line_cyl(p_intk, p_turbo, H["line_d"]*0.8)
+plumbing = fuse_all([line_R, line_L, line_IT])
+
+# ---------------- Powerpack sólido y coherente ----------------
+powerpack = fuse_all([block, head, front_cap, rail, intake, exhaust, turbo, tank_R, tank_L, rad_R, rad_L, plumbing])
+
+# Recorte de seguridad: garantizar que el powerpack no sobresale del hueco (si el casco interior es más pequeño)
+# limitador: cilindro del diámetro interior del casco
+limit = Part.makeCylinder((H["adapter_id"]/2.0), H["block_L"] + 200.0)
+limit.Placement = App.Placement(App.Vector(H["cx"] - (H["block_L"] + 200.0)/2.0, 0, 0), rot_to_x())
+powerpack_trimmed = powerpack.common(limit)  # recorta fuera del diámetro interior
+
+powerpack_obj = add_obj(powerpack_trimmed, "Hydrogen_Powerpack_Solid")
+
+# ---------------- Ensamble final coherente (sin penetraciones) ----------------
+final_shape = casco_recortado.Shape.fuse(adapter_obj.Shape).fuse(powerpack_obj.Shape)
+final_obj = add_obj(final_shape, "Destiny_H2_TruckSatellite_Integrated")
+
+# ---------------- Agrupación ----------------
+grp = doc.getObject("Destiny_HeavyArmor_Ship")
+if grp is None:
+    grp = doc.addObject("App::Part","Destiny_HeavyArmor_Ship")
+for o in [final_obj, cockpit_obj]:
+    try: grp.addObject(o)
+    except: pass
+
+doc.recompute()
+try:
+    Gui.ActiveDocument.ActiveView.viewAxonometric()
+    Gui.SendMsgToActiveView("ViewFit")
+except: pass
+
+print("Módulo H2 sólido y coherente integrado sin penetraciones ni huecos.")

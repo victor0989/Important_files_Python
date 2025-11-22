@@ -1,0 +1,409 @@
+# -*- coding: utf-8 -*-
+import FreeCAD as App, FreeCADGui as Gui, Part, math
+
+# -----------------------------
+# Documento
+# -----------------------------
+doc_name = "Direct_Fusion_Drive"
+if App.ActiveDocument is None or App.ActiveDocument.Label != doc_name:
+    App.newDocument(doc_name)
+doc = App.ActiveDocument
+
+# -----------------------------
+# Parámetros principales
+# -----------------------------
+P = {
+    "nose_len": 800.0, "nose_base_d": 600.0,
+    "mid_len": 1400.0, "mid_d": 900.0,
+    "rear_len": 800.0, "rear_d": 1200.0,
+    "hull_t": 10.0,
+    "cockpit_w": 900.0, "cockpit_h": 400.0, "cockpit_l": 600.0, "cockpit_x0": 600.0,
+    "win_w": 600.0, "win_h": 250.0, "win_th": 20.0,
+    "win_y_off": 0.5*(900.0/2.0-250.0/2.0), "win_z": 0.0,
+    "reactor_d": 800.0, "reactor_l": 900.0, "reactor_cx": 2600.0,
+    "ring_h": 30.0, "ring_ro": 420.0, "ring_ri": 380.0, "ring_n": 6, "ring_pitch": 150.0,
+    "coil_rect_w": 80.0, "coil_rect_h": 80.0, "coil_R": 440.0, "coil_n": 4, "coil_span": 800.0,
+    "moderator_t": 100.0, "moderator_gap": 20.0, "moderator_over": 200.0,
+    "tungsten_post_t": 10.0,
+    "nozzle_throat_d": 300.0, "nozzle_exit_d": 900.0, "nozzle_l": 700.0,
+    "nozzle_cx": 2850.0, "nozzle_fillet_r": 40.0,
+    "truss_n": 3, "truss_tube_w": 80.0, "truss_R_attach": 550.0,
+    "tank_d": 300.0, "tank_l": 700.0, "tank_cx": 1600.0, "tank_cy": 300.0, "tank_cz": -150.0,
+    "leg_L_fold": 400.0, "leg_L_ext": 600.0, "leg_foot_d": 180.0,
+    "leg_side_x1": 1050.0, "leg_side_x2": 1950.0, "leg_side_y": 600.0,
+    "leg_front_x": 400.0, "leg_front_y": 0.0, "leg_front_z": -(900.0/2.0)+50.0,
+    "wing_root_w": 600.0, "wing_tip_w": 150.0, "wing_chord": 450.0,
+    "fin_h": 400.0, "fin_base": 200.0,
+    "rad_panel_w": 800.0, "rad_panel_h": 600.0, "rad_panel_n": 5
+}
+
+TPS = {"tps_d": 2400.0, "tps_t": 100.0, "tps_gap": 120.0, "sup_L": 280.0, "sup_d_base": 900.0, "sup_d_tip": 600.0}
+RAD = {"th": 4.0, "mount_gap_y": 30.0, "x_start": None, "gap_x": None}
+
+# Nuevos subsistemas
+HGA = {"f": 350.0, "rim_r": 700.0, "th": 6.0, "cx": -300.0, "y_off": 0.0, "z_off": 0.0,
+       "yoke_w": 120.0, "yoke_r": 450.0, "feed_d": 160.0, "feed_l": 280.0,
+       "sub_d": 220.0, "sub_z": 120.0}
+
+PODS = {"n": 8, "d": 260.0, "l": 700.0, "R": 650.0,
+        "x_center": P["nose_len"] + 0.5*P["mid_len"]}
+
+BOOM = {"l": 900.0, "d": 60.0, "x": P["nose_len"] + P["mid_len"]*0.25, "R": PODS["R"] + 220.0}
+
+RCS = {"rings_x": [P["nose_len"]*0.8, P["reactor_cx"] + P["reactor_l"]*0.5],
+       "off": P["mid_d"]/2.0 + 120.0, "thr_d": 80.0, "thr_l": 160.0}
+
+TPS2 = {"rim_d": 2400.0, "th": 60.0, "gap": 120.0, "x": -80.0, "petals": 6,
+        "pet_w": 420.0, "pet_l": 650.0, "pet_th": 6.0}
+
+# -----------------------------
+# Materiales
+# -----------------------------
+MAT = {
+    'AL': {'name': 'AA-2xxx', 'rho': 2700.0, 'E': 72e9, 'nu': 0.33, 'type': 'isotropic'},
+    'STEEL': {'name': 'SS-304', 'rho': 8000.0, 'E': 200e9, 'nu': 0.30, 'type': 'isotropic'},
+    'COPPER': {'name': 'Copper', 'rho': 8960.0, 'E': 110e9, 'nu': 0.34, 'type': 'isotropic'},
+    'CFRP': {'name': 'CFRP', 'rho': 1550.0, 'Ex': 130e9, 'Ey': 10e9, 'Ez': 10e9, 'nu_xy': 0.25, 'type': 'orthotropic'},
+    'CC': {'name': 'C/C TPS', 'rho': 1600.0, 'Ex': 70e9, 'Ey': 70e9, 'Ez': 10e9, 'nu_xy': 0.2, 'type': 'orthotropic'},
+    'GLASS': {'name': 'Fused Silica', 'rho': 2200.0, 'E': 70e9, 'nu': 0.17, 'type': 'isotropic'},
+    'W': {'name': 'Tungsten', 'rho': 19300.0, 'E': 400e9, 'nu': 0.28, 'type': 'isotropic'},
+    'KAPTON': {'name': 'Kapton', 'rho': 1420.0, 'E': 2.5e9, 'nu': 0.34, 'type': 'isotropic'}
+}
+
+# -----------------------------
+# Utilidades comunes
+# -----------------------------
+X_AXIS = App.Vector(1,0,0); Y_AXIS = App.Vector(0,1,0); Z_AXIS = App.Vector(0,0,1)
+
+def rot_to_x():
+    return App.Rotation(Y_AXIS, 90)
+
+def add_obj(shape, label):
+    obj = doc.addObject("Part::Feature", label)
+    obj.Shape = shape
+    return obj
+
+def set_mat(obj, mat):
+    if not obj: return
+    m = MAT.get(mat, None) if isinstance(mat, str) else mat
+    if not m: return
+    obj.addProperty("App::PropertyString","Material","Meta","").Material = m.get('name','')
+    obj.addProperty("App::PropertyMap","MaterialData","Meta","").MaterialData = {k:str(v) for k,v in m.items()}
+    obj.addProperty("App::PropertyFloat","Density","Meta","").Density = m.get('rho',0.0)
+
+def set_color(obj, rgb=(0.7,0.7,0.7), alpha=0.0):
+    try:
+        obj.ViewObject.ShapeColor = rgb
+        obj.ViewObject.Transparency = int(alpha*100)
+    except Exception:
+        pass
+
+def make_cyl_x(d, L, cx=0.0, cy=0.0, cz=0.0, label="CylX"):
+    r = d/2.0
+    cyl = Part.makeCylinder(r, L)
+    cyl.Placement = App.Placement(App.Vector(cx-L/2.0, cy, cz), rot_to_x())
+    return add_obj(cyl, label)
+
+def make_cone_x(d1, d2, L, cx=0.0, cy=0.0, cz=0.0, label="ConeX"):
+    r1 = d1/2.0; r2 = d2/2.0
+    cone = Part.makeCone(r1, r2, L)
+    cone.Placement = App.Placement(App.Vector(cx-L/2.0, cy, cz), rot_to_x())
+    return add_obj(cone, label)
+
+def make_torus_x(R, r, cx=0.0, cy=0.0, cz=0.0, label="TorusX"):
+    tor = Part.makeTorus(R, r)
+    tor.Placement = App.Placement(App.Vector(cx,cy,cz), rot_to_x())
+    return add_obj(tor, label)
+
+def make_box(w, d, h, cx=0.0, cy=0.0, cz=0.0, label="Box"):
+    b = Part.makeBox(w, d, h)
+    b.Placement = App.Placement(App.Vector(cx-w/2.0, cy-d/2.0, cz-h/2.0), App.Rotation())
+    return add_obj(b, label)
+
+def make_hollow_from_offset(outer_shape, t, label="Shell"):
+    # robustez con mínimo relativo y tolerancia mayor
+    t_eff = max(t, 0.02*min(outer_shape.BoundBox.XLength, outer_shape.BoundBox.YLength, outer_shape.BoundBox.ZLength))
+    try:
+        inner = outer_shape.makeOffsetShape(-t_eff, 0.1, join=2, fill=True)
+        shell = outer_shape.cut(inner)
+        return add_obj(shell, label)
+    except Exception:
+        return add_obj(outer_shape, label+"_fallback")
+
+def fillet_between(shpA, shpB, r):
+    fused = shpA.fuse(shpB)
+    try:
+        edges = [e for e in fused.Edges if 30 < e.Length < 10000]
+        new = fused.makeFillet(r, edges)
+        return new
+    except Exception:
+        return fused
+
+def sweep_rect_around_X(R, rw, rh, cx, cy, cz, ax0, ax1, label="CoilSweep"):
+    circ = Part.makeCircle(R, App.Vector(cx, cy, cz), X_AXIS, ax0, ax1)
+    path = Part.Wire([circ])
+    p0=App.Vector(0,-rw/2.0,-rh/2.0)
+    p1=App.Vector(0, rw/2.0,-rh/2.0)
+    p2=App.Vector(0, rw/2.0, rh/2.0)
+    p3=App.Vector(0,-rw/2.0, rh/2.0)
+    e1=Part.makeLine(p0,p1); e2=Part.makeLine(p1,p2)
+    e3=Part.makeLine(p2,p3); e4=Part.makeLine(p3,p0)
+    prof = Part.Wire([e1,e2,e3,e4])
+    prof.Placement = App.Placement(App.Vector(cx,cy,cz), App.Rotation(X_AXIS,0))
+    sweep = path.makePipeShell([prof], True, True)
+    return add_obj(sweep, label)
+
+# -----------------------------
+# Subensamblajes originales
+# -----------------------------
+def make_fuselage():
+    nose = make_cone_x(P["nose_base_d"], 0.0, P["nose_len"], P["nose_len"]/2.0, 0, 0, "Nose"); set_mat(nose, "AL"); set_color(nose,(0.78,0.8,0.83))
+    mid  = make_cyl_x(P["mid_d"], P["mid_len"], P["nose_len"]+P["mid_len"]/2.0, 0, 0, "Mid"); set_mat(mid, "AL"); set_color(mid,(0.78,0.8,0.83))
+    rear = make_cone_x(P["mid_d"], P["rear_d"], P["rear_len"], P["nose_len"]+P["mid_len"]+P["rear_len"]/2.0, 0, 0, "Rear"); set_mat(rear, "AL"); set_color(rear,(0.78,0.8,0.83))
+    outer = nose.Shape.fuse(mid.Shape).fuse(rear.Shape)
+    shell = make_hollow_from_offset(outer, P["hull_t"], "FuselageShell"); set_mat(shell, "AL"); set_color(shell,(0.72,0.76,0.8))
+    return shell
+
+def make_cockpit():
+    c = make_box(P["cockpit_l"], P["cockpit_w"], P["cockpit_h"], P["cockpit_x0"], 0.0, P["cockpit_h"]/2.0, "Cockpit"); set_mat(c,"AL"); set_color(c,(0.72,0.76,0.8))
+    win = make_box(P["win_th"], P["win_w"], P["win_h"], P["cockpit_x0"]+P["cockpit_l"]/2.0, 0.0, P["cockpit_h"]/2.0+P["win_z"], "Window"); set_mat(win,"GLASS"); set_color(win,(0.9,0.95,1.0),0.5)
+    return c, win
+
+def make_reactor():
+    r = make_cyl_x(P["reactor_d"], P["reactor_l"], P["reactor_cx"], 0, 0, "Reactor"); set_mat(r,"STEEL"); set_color(r,(0.55,0.55,0.58))
+    rings=[]
+    for i in range(P["ring_n"]):
+        cx = P["reactor_cx"] - P["reactor_l"]/2.0 + i*P["ring_pitch"]
+        rg = make_torus_x(P["ring_ro"], P["ring_h"]/2.0, cx, 0, 0, "Ring_%d"%i); set_mat(rg,"COPPER"); set_color(rg,(0.8,0.55,0.2))
+        rings.append(rg)
+    coils=[]
+    for j in range(P["coil_n"]):
+        y = -P["coil_span"]/2.0 + j*(P["coil_span"]/(max(P["coil_n"]-1,1)))
+        coil = sweep_rect_around_X(P["coil_R"], P["coil_rect_w"], P["coil_rect_h"], P["reactor_cx"], y, 0, 0, 360, "Coil_%d"%j)
+        set_mat(coil,"COPPER"); set_color(coil,(0.8,0.55,0.2))
+        coils.append(coil)
+    return r, rings, coils
+
+def make_moderator():
+    L = P["reactor_l"] + P["moderator_over"]
+    outer = Part.makeCylinder(P["reactor_d"]/2.0 + P["moderator_t"], L)
+    outer.Placement = App.Placement(App.Vector(P["reactor_cx"]-L/2.0,0,0), rot_to_x())
+    inner = Part.makeCylinder(P["reactor_d"]/2.0 + P["moderator_gap"], L)
+    inner.Placement = outer.Placement
+    mod = outer.cut(inner)
+    m = add_obj(mod, "Moderator"); set_mat(m, "CC"); set_color(m,(0.15,0.15,0.15))
+    return m
+
+def make_nozzle():
+    cone = make_cone_x(P["nozzle_throat_d"], P["nozzle_exit_d"], P["nozzle_l"], P["nozzle_cx"], 0, 0, "Nozzle")
+    try:
+        fil = cone.Shape.makeFillet(P["nozzle_fillet_r"], cone.Shape.Edges)
+        cone.Shape = fil
+    except Exception:
+        pass
+    set_mat(cone, "STEEL"); set_color(cone,(0.5,0.5,0.55))
+    return cone
+
+def make_truss():
+    tr=[]
+    for i in range(P["truss_n"]):
+        ang = i*360.0/P["truss_n"]
+        x1 = P["reactor_cx"] - P["reactor_l"]/2.0
+        y1 = math.cos(math.radians(ang))*P["truss_R_attach"]
+        z1 = math.sin(math.radians(ang))*P["truss_R_attach"]
+        x2 = P["nozzle_cx"]; y2 = 0; z2 = 0
+        vec = App.Vector(x2-x1, y2-y1, z2-z1)
+        L = vec.Length
+        if L < 1e-3: continue
+        cyl = Part.makeCylinder(P["truss_tube_w"]/2.0, L)
+        rot = App.Rotation(App.Vector(0,0,1), vec)  # alinea Z->vec
+        cyl.Placement = App.Placement(App.Vector(x1,y1,z1), rot)
+        o = add_obj(cyl, "Truss_%d"%i); set_mat(o, "STEEL"); set_color(o,(0.7,0.7,0.75))
+        tr.append(o)
+    return tr
+
+def make_tanks():
+    tk=[]
+    for s in [-1,1]:
+        t = make_cyl_x(P["tank_d"], P["tank_l"], P["tank_cx"], s*P["tank_cy"], P["tank_cz"], "Tank_%d"%s)
+        set_mat(t,"AL"); set_color(t,(0.75,0.77,0.8))
+        tk.append(t)
+    return tk
+
+def make_legs():
+    legs=[]
+    pts = [
+        (P["leg_side_x1"], P["leg_side_y"], 0.0),
+        (P["leg_side_x2"],-P["leg_side_y"], 0.0),
+        (P["leg_front_x"], P["leg_front_y"], P["leg_front_z"])
+    ]
+    for i,(x,y,z) in enumerate(pts):
+        leg = Part.makeCylinder(20, P["leg_L_ext"]); leg.Placement = App.Placement(App.Vector(x,y,z), rot_to_x())
+        lo = add_obj(leg, "Leg_%d"%i); set_mat(lo,"STEEL"); set_color(lo,(0.6,0.6,0.65))
+        ft = Part.makeCylinder(P["leg_foot_d"]/2.0, 20); ft.Placement = App.Placement(App.Vector(x,y,z-P["leg_L_ext"]), App.Rotation())
+        fo = add_obj(ft, "Foot_%d"%i); set_mat(fo,"STEEL"); set_color(fo,(0.6,0.6,0.65))
+        legs += [lo, fo]
+    return legs
+
+def make_wings():
+    w = Part.makeWedge(P["wing_chord"], P["wing_chord"], P["wing_root_w"], P["wing_tip_w"], 0, P["wing_chord"])
+    w.Placement = App.Placement(App.Vector(P["nose_len"]+P["mid_len"]/2.0, 0, P["cockpit_h"]), App.Rotation(Z_AXIS, 0))
+    wg = add_obj(w, "Wing"); set_mat(wg, "CFRP"); set_color(wg,(0.2,0.2,0.22))
+    return [wg]
+
+def make_fins():
+    fin = Part.makeBox(P["fin_base"], 20, P["fin_h"])
+    fin.Placement = App.Placement(App.Vector(P["nozzle_cx"]+P["nozzle_l"]/2.0, 0, -P["fin_h"]/2.0), App.Rotation())
+    f = add_obj(fin, "Fin"); set_mat(f, "CFRP"); set_color(f,(0.2,0.2,0.22))
+    return [f]
+
+def make_radiators():
+    panels=[]
+    RAD["x_start"] = P["reactor_cx"] + 200.0
+    RAD["gap_x"]   = P["rad_panel_w"] + 50.0
+    for i in range(P["rad_panel_n"]):
+        x = RAD["x_start"] + i*RAD["gap_x"]
+        for s in [-1,1]:
+            p = make_box(P["rad_panel_w"], RAD["th"], P["rad_panel_h"], x, s*(P["mid_d"]/2.0 + RAD["mount_gap_y"]), 0, "Rad_%d_%+d"%(i,s))
+            set_mat(p,"CFRP"); set_color(p,(0.1,0.1,0.1))
+            panels.append(p)
+    return panels
+
+def make_tps():
+    d = TPS["tps_d"]; t = TPS["tps_t"]
+    outer = Part.makeCylinder(d/2.0, t); outer.Placement = App.Placement(App.Vector(-t,0,0), rot_to_x())
+    inner = Part.makeCylinder(d/2.0 - TPS["tps_gap"], t); inner.Placement = outer.Placement
+    tps = outer.cut(inner)
+    tpso = add_obj(tps, "TPS"); set_mat(tpso, "CC"); set_color(tpso,(0.08,0.08,0.08))
+    sup = make_cone_x(TPS["sup_d_base"], TPS["sup_d_tip"], TPS["sup_L"], -TPS["sup_L"]/2.0, 0, 0, "TPS_Support")
+    set_mat(sup,"AL"); set_color(sup,(0.75,0.78,0.82))
+    return tpso, sup
+
+# -----------------------------
+# Nuevos subsistemas
+# -----------------------------
+def make_paraboloid_x(f, rim_r, th, cx=0, cy=0, cz=0, label="HGA_Dish"):
+    # Perfil parabólico en YZ: y = z^2 / (4f)
+    def z_to_y(z): return (z*z)/(4.0*f)
+    zs = [0, rim_r*0.25, rim_r*0.5, rim_r*0.75, rim_r]
+    pts = [App.Vector(0, z_to_y(z), z) for z in zs]
+    edges = [Part.makeLine(pts[i], pts[i+1]) for i in range(len(pts)-1)]
+    prof = Part.Wire(edges)
+    # Revolución del wire (shell) alrededor del eje X en (cx,cy,cz)
+    shell = prof.revolve(App.Vector(cx,cy,cz), X_AXIS, 360)
+    # Espesor negativo hacia normal interior
+    solid = shell.makeThickness(shell.Faces, -th, 1e-2, True)
+    o = add_obj(solid, label); set_mat(o,"AL"); set_color(o,(0.85,0.85,0.88))
+    return o
+
+def make_hga():
+    d = make_paraboloid_x(HGA["f"], HGA["rim_r"], HGA["th"], HGA["cx"], HGA["y_off"], HGA["z_off"], "HGA_Dish")
+    # Yugo semicircular (pipe sobre arco)
+    R = HGA["yoke_r"]; w = HGA["yoke_w"]
+    arc = Part.ArcOfCircle(Part.Circle(App.Vector(HGA["cx"],0,0), X_AXIS, R), 0, math.pi).toShape()
+    path = Part.Wire([arc])
+    circ = Part.makeCircle(w/2.0).toShape()
+    yoke = path.makePipeShell([Part.Wire([e for e in circ.Edges])], True, True)
+    y = add_obj(yoke, "HGA_Yoke"); set_mat(y,"STEEL"); set_color(y,(0.6,0.6,0.65))
+    # Feed y subreflector
+    feed = make_cyl_x(HGA["feed_d"], HGA["feed_l"], HGA["cx"] + HGA["f"]*0.6, 0, 0, "HGA_Feed"); set_mat(feed,"GLASS"); set_color(feed,(0.9,0.9,1.0),0.2)
+    sub  = make_cone_x(HGA["sub_d"], 0.0, HGA["sub_z"], HGA["cx"] + HGA["f"]*0.95, 0, 0, "HGA_Sub"); set_mat(sub,"AL"); set_color(sub,(0.85,0.85,0.88))
+    return [d, y, feed, sub]
+
+def make_bus_and_pods():
+    bus = make_cyl_x(800.0, 900.0, PODS["x_center"], 0, 0, "Central_Bus"); set_mat(bus,"AL"); set_color(bus,(0.7,0.75,0.8))
+    pods=[]
+    for i in range(PODS["n"]):
+        ang = 2*math.pi*i/PODS["n"]
+        y = PODS["R"]*math.cos(ang); z = PODS["R"]*math.sin(ang)
+        pod = make_cyl_x(PODS["d"], PODS["l"], PODS["x_center"], y, z, "Pod_%02d"%i); set_mat(pod,"AL"); set_color(pod,(0.75,0.75,0.78))
+        pods.append(pod)
+    return bus, pods
+
+def make_booms_and_trackers():
+    parts=[]
+    for s in [-1,1]:
+        b = make_cyl_x(BOOM["d"], BOOM["l"], BOOM["x"], s*BOOM["R"], 0, "Boom_%+d"%s); set_mat(b,"CFRP"); set_color(b,(0.2,0.2,0.2))
+        parts.append(b)
+    st1 = make_box(120,120,120, BOOM["x"], 0,  P["mid_d"]/2.0+120, "StarTracker_1"); set_mat(st1,"AL"); set_color(st1,(0.6,0.6,0.65))
+    st2 = make_box(120,120,120, BOOM["x"], 0, -P["mid_d"]/2.0-120, "StarTracker_2"); set_mat(st2,"AL"); set_color(st2,(0.6,0.6,0.65))
+    return parts + [st1, st2]
+
+def make_rcs_quads():
+    parts=[]
+    for x in RCS["rings_x"]:
+        for (y,z) in [(RCS["off"],0), (-RCS["off"],0), (0,RCS["off"]), (0,-RCS["off"])]:
+            t = make_cone_x(RCS["thr_d"], RCS["thr_d"]*0.4, RCS["thr_l"], x, y, z, "RCS_%d_%+d_%+d"%(int(x),int(y),int(z)))
+            set_mat(t,"STEEL"); set_color(t,(0.5,0.5,0.55))
+            parts.append(t)
+    # Ruedas de reacción
+    rwc = make_cyl_x(260.0,120.0, PODS["x_center"], 0, 0, "RW_Center")
+    rwy = make_cyl_x(200.0,120.0, PODS["x_center"], 260, 0, "RW_Y")
+    rwz = make_cyl_x(200.0,120.0, PODS["x_center"], 0, 260, "RW_Z")
+    for r in [rwc,rwy,rwz]: set_mat(r,"STEEL"); set_color(r,(0.35,0.35,0.38))
+    return parts + [rwc,rwy,rwz]
+
+def make_front_tps():
+    # Toro TPS frontal
+    R = TPS2["rim_d"]/2.0 - TPS2["gap"]
+    tor = Part.makeTorus(R, TPS2["th"]/2.0)
+    tor.Placement = App.Placement(App.Vector(TPS2["x"],0,0), rot_to_x())
+    tps_ring = add_obj(tor, "TPS_Toro"); set_mat(tps_ring,"CC"); set_color(tps_ring,(0.05,0.05,0.05))
+    # Pétalos radiativos
+    petals=[]
+    for i in range(TPS2["petals"]):
+        ang = 2*math.pi*i/TPS2["petals"]
+        y = (R + TPS2["pet_l"]/2.0)*math.cos(ang)
+        z = (R + TPS2["pet_l"]/2.0)*math.sin(ang)
+        p = make_box(TPS2["pet_th"], TPS2["pet_w"], TPS2["pet_l"], TPS2["x"], y, z, "TPS_Petal_%02d"%i)
+        set_mat(p,"CC"); set_color(p,(0.05,0.05,0.05))
+        petals.append(p)
+    # Espina de heat-pipe
+    spine = make_cyl_x(80.0, P["nose_len"]+300.0, P["nose_len"]/2.0, 0, 0, "TPS_Spine"); set_mat(spine,"W"); set_color(spine,(0.2,0.2,0.2))
+    return [tps_ring, spine] + petals
+
+# -----------------------------
+# Utilidades de segmentación (opcional impresión)
+# -----------------------------
+def slice_along_x(obj, nx=3, gap=0.2):
+    bb = obj.Shape.BoundBox
+    L = bb.XLength
+    segs=[]
+    for i in range(nx):
+        x0 = bb.XMin + i*(L/nx) + gap/2.0
+        x1 = bb.XMin + (i+1)*(L/nx) - gap/2.0
+        box = Part.makeBox(x1-x0, bb.YLength+2*gap, bb.ZLength+2*gap,
+                           App.Vector(x0, bb.YMin-gap, bb.ZMin-gap))
+        seg_shape = obj.Shape.common(box)
+        if not seg_shape.isNull():
+            segs.append(add_obj(seg_shape, obj.Label+"_seg%02d"%i))
+    return segs
+
+# -----------------------------
+# Ensamblaje
+# -----------------------------
+def main():
+    fus = make_fuselage()
+    cockpit, win = make_cockpit()
+    reactor, rings, coils = make_reactor()
+    mod = make_moderator()
+    noz = make_nozzle()
+    truss = make_truss()
+    tanks = make_tanks()
+    legs = make_legs()
+    wings = make_wings()
+    fins = make_fins()
+    rads = make_radiators()
+    tps1, sup = make_tps()
+
+    # Nuevos
+    hga = make_hga()
+    bus, pods = make_bus_and_pods()
+    booms = make_booms_and_trackers()
+    rcs = make_rcs_quads()
+    tps_front = make_front_tps()
+
+    doc.recompute()
+
+if __name__ == "__main__":
+    main()

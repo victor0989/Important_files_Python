@@ -1,0 +1,288 @@
+# -*- coding: utf-8 -*-
+"""
+Macro FreeCAD mejorada: Direct Fusion Drive - versión refinada
+Mejoras principales:
+ - Correcciones de transformaciones y sistema de referencia (origen en el centro del fuselaje)
+ - Wings modeladas con loft para obtener espesor variable (raíz -> punta)
+ - Validaciones de parámetros y manejo de errores en operaciones geométricas
+ - Agrupado de objetos en un grupo "Spacecraft" y coloreado para distinguir partes
+ - Cálculo de volumen y masa aproximada por material (densidades configurables)
+ - Blindaje multicapa realizado con offset (con control de fallos)
+ - Salidas impresas con resumen de volúmenes y masas
+
+Instrucciones: abrir FreeCAD, abrir el editor de macros, crear nueva macro y pegar este archivo.
+Ejecutar la macro desde FreeCAD (Macro -> Ejecutar).
+"""
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import math
+
+# ------- Parámetros (mm, kg/m3) -------
+P = {
+    # Dimensiones globales (mm)
+    "L_total": 3000.0,
+    "H_total": 1200.0,
+    "W_total": 1500.0,
+
+    # Fuselaje
+    "fuse_len": 3000.0,
+    "fuse_w": 1500.0,
+    "fuse_h": 1200.0,
+    "fuse_chamfer": 40.0,
+    "fuse_fillet": 60.0,
+
+    # Cabina
+    "cab_len": 600.0,
+    "cab_base_d": 1500.0,
+    "cab_tip_d": 200.0,
+    "cab_sphere_r": 750.0,
+
+    # Alas
+    "wing_len": 900.0,
+    "wing_root_t": 120.0,
+    "wing_tip_t": 40.0,
+    "wing_root_w": 900.0,
+    "wing_tip_w": 300.0,
+
+    # Reactor
+    "reactor_d": 800.0,
+    "reactor_l": 1200.0,
+
+    # Tobera
+    "nozzle_d": 500.0,
+    "nozzle_l": 700.0,
+
+    # Puertos
+    "dock_d": 800.0,
+    "dock_l": 200.0,
+    "sec_port_d": 150.0,
+    "sec_port_l": 300.0,
+
+    # Blindaje (offsets en mm)
+    "shield_layers": [5.0, 30.0, 10.0],  # grosores de las capas (ext -> int)
+}
+
+# Densidades para masa estimada (kg/mm^3 -> convertiremos luego)
+DENS = {
+    "Aluminium": 2700.0,      # kg/m3
+    "Hydrogen": 0.08988,      # kg/m3 (aprox gas a 0C) - ejemplo simbólico
+    "Tungsten": 19300.0,
+}
+
+# Conversión: mm^3 -> m^3 = *1e-9 ; densidad en kg/m3
+def mass_from_volume_mm3(volume_mm3, density_kg_m3):
+    return volume_mm3 * 1e-9 * density_kg_m3
+
+# Crear o reiniciar documento
+doc_name = "DFD_v2_improved"
+if App.ActiveDocument is None or App.ActiveDocument.Label != doc_name:
+    App.newDocument(doc_name)
+    doc = App.ActiveDocument
+else:
+    doc = App.ActiveDocument
+    # opcional: limpiar objetos existentes en el doc
+    for o in doc.Objects:
+        doc.removeObject(o.Name)
+
+# Helper para añadir objeto con nombre y color
+def add_obj(shape, label, color=(0.8,0.8,0.8)):
+    o = doc.addObject("Part::Feature", label)
+    o.Shape = shape
+    try:
+        o.ViewObject.ShapeColor = color
+    except Exception:
+        pass
+    return o
+
+# Origen: centro del fuselaje (longitudinalmente en 0)
+# 1) Fuselaje: caja centrada en el origen
+f_w = P["fuse_w"]
+f_h = P["fuse_h"]
+f_l = P["fuse_len"]
+
+fuse = Part.makeBox(f_l, f_w, f_h)
+# posicionar caja de modo que su centro longitudinal coincida con el origen
+fuse.translate(App.Vector(-f_l/2, -f_w/2, -f_h/2))
+
+# Aplicar chamfer/fillet con control de errores
+try:
+    if P["fuse_chamfer"] > 0:
+        fuse = fuse.makeChamfer(P["fuse_chamfer"], fuse.Edges)
+except Exception as e:
+    print("Warning: Chamfer no aplicado:", e)
+
+try:
+    if P["fuse_fillet"] > 0:
+        fuse = fuse.makeFillet(P["fuse_fillet"], fuse.Edges)
+except Exception as e:
+    print("Warning: Fillet no aplicado:", e)
+
+fuse_obj = add_obj(fuse, "Fuselaje", color=(0.9,0.9,0.85))
+
+# 2) Cabina frontal: cono truncado + esfera suavizada
+cab_len = P["cab_len"]
+cab_base = P["cab_base_d"] / 2.0
+cab_tip = P["cab_tip_d"] / 2.0
+
+# Hacer cono con eje X positivo, y colocar su base en la parte frontal del fuselaje
+cab_cone = Part.makeCone(cab_base, cab_tip, cab_len)
+# por defecto el cono apunta en +Z, rotamos para que apunte en +X
+cab_cone.rotate(App.Vector(0,0,0), App.Vector(0,1,0), -90)
+# colocar la base del cono en el frente del fuselaje
+cab_cone.translate(App.Vector(-f_l/2 - cab_len + cab_tip, 0, 0))
+
+# esfera para suavizar nariz, su centro cerca de la punta del cono
+cab_sphere_r = P["cab_sphere_r"]
+cab_sphere = Part.makeSphere(cab_sphere_r)
+# situar centro de esfera en la punta frontal del fuselaje (x = -fuse_len/2)
+cab_sphere.translate(App.Vector(-f_l/2, 0, 0))
+
+# Intersección/union robusta
+try:
+    cabina = cab_cone.fuse(cab_sphere)
+except Exception:
+    cabina = cab_cone
+
+cab_obj = add_obj(cabina, "Cabina", color=(0.7,0.85,0.95))
+
+# 3) Alas: crear loft entre perfiles para tener espesor variable
+def crear_ala(side=1):
+    # side = +1 derecha, -1 izquierda
+    length = P["wing_len"]
+    root_w = P["wing_root_w"]
+    tip_w = P["wing_tip_w"]
+    t_root = P["wing_root_t"]
+    t_tip = P["wing_tip_t"]
+
+    # perfiles (rectangulos simples) en dos estaciones: raiz (x=0), punta (x=length)
+    # perfil raiz (centro en Y = side * fuse_w/2 + offset)
+    y_root = side * (f_w/2)
+    y_tip = side * (f_w/2 + (root_w+tip_w)/4)  # un poco desplazada hacia afuera
+
+    # Crear dos caras rectangulares que representen las secciones
+    r1 = Part.makePlane(root_w, t_root)
+    r1.rotate(App.Vector(0,0,0), App.Vector(0,0,1), 0)
+    r1.translate(App.Vector(150.0, y_root - root_w/2.0, -t_root/2.0))
+
+    r2 = Part.makePlane(tip_w, t_tip)
+    r2.translate(App.Vector(150.0 + length, y_tip - tip_w/2.0, -t_tip/2.0))
+
+    # convertir a wire/edges para loft
+    s1 = r1
+    s2 = r2
+    try:
+        wing_solid = Part.makeLoft([s1, s2], True)
+    except Exception as e:
+        print("Warning: Loft de ala fallido, usando extrusi\u00f3n:", e)
+        # fallback: extrusión simple desde perfil raiz
+        face = Part.Face(Part.makePolygon([App.Vector(0,0,0), App.Vector(length,0,0), App.Vector(length,side*tip_w,0), App.Vector(0,side*root_w,0), App.Vector(0,0,0)]))
+        wing_solid = face.extrude(App.Vector(0,0,(t_root+t_tip)/2))
+    return wing_solid
+
+wing_r = crear_ala(side=1)
+wing_l = crear_ala(side=-1)
+wing_obj_r = add_obj(wing_r, "Ala_Derecha", color=(0.6,0.6,0.8))
+wing_obj_l = add_obj(wing_l, "Ala_Izquierda", color=(0.6,0.6,0.8))
+
+# 4) Reactor central (cilindro) ubicado en la parte posterior-central
+reactor = Part.makeCylinder(P["reactor_d"]/2.0, P["reactor_l"])  # eje Z por defecto
+# rotar para eje X
+reactor.rotate(App.Vector(0,0,0), App.Vector(0,1,0), -90)
+# posicionar centrado en X a 1/3 desde la popa
+reactor.translate(App.Vector(f_l/6.0, 0, 0))
+reactor_obj = add_obj(reactor, "Reactor", color=(0.95,0.7,0.5))
+
+# 5) Toberas traseras (derecha e izquierda)
+noz_r = Part.makeCylinder(P["nozzle_d"]/2.0, P["nozzle_l"]) 
+noz_r.rotate(App.Vector(0,0,0), App.Vector(0,1,0), -90)
+noz_r.translate(App.Vector(f_l/2.0 + 100.0, P["nozzle_d"], 0))
+
+noz_l = noz_r.copy()
+noz_l.translate(App.Vector(0, -2*P["nozzle_d"], 0))
+nozzles = noz_r.fuse(noz_l)
+nozzles_obj = add_obj(nozzles, "Toberas", color=(0.8,0.5,0.5))
+
+# 6) Blindaje multicapa mediante offsets (si falla, se captura la excepcion)
+shapes_for_shield = []
+try:
+    outer = fuse
+    offsets = P.get("shield_layers", [])
+    current = outer
+    shells = []
+    # Crear shells realizando offset interno sucesivo
+    for i, off in enumerate(offsets):
+        # makeOffsetShape acepta offset en mm, signo negativo para recortar hacia dentro
+        next_shape = current.makeOffsetShape(-off, 0.01)
+        shells.append(current.cut(next_shape))
+        current = next_shape
+    # core interior
+    core = current
+    # crear objetos si se han generado
+    colors = [(0.9,0.9,0.6),(0.6,0.8,0.9),(0.7,0.7,0.7)]
+    shield_objs = []
+    for idx, s in enumerate(shells):
+        name = f"Blindaje_Capa_{idx+1}"
+        c = colors[idx % len(colors)]
+        shield_objs.append(add_obj(s, name, color=c))
+except Exception as e:
+    print("Warning: Blindaje multicapa no completado:", e)
+
+# 7) Puerto de acoplamiento trasero
+dock = Part.makeCylinder(P["dock_d"]/2.0, P["dock_l"]) 
+# colocar en la cola (popa) exactamente en X = +fuse_len/2
+dock.rotate(App.Vector(0,0,0), App.Vector(0,1,0), -90)
+dock.translate(App.Vector(f_l/2.0 + P["dock_l"]/2.0, 0, 0))
+dock_obj = add_obj(dock, "Puerto_Acoplamiento", color=(0.85,0.85,0.9))
+
+# 8) Puertos secundarios en alas (simetrico)
+sec1 = Part.makeCylinder(P["sec_port_d"]/2.0, P["sec_port_l"]) 
+sec1.rotate(App.Vector(0,0,0), App.Vector(0,1,0), -90)
+sec1.translate(App.Vector(150.0, f_w/2.0 + P["sec_port_l"]/2.0, 0))
+sec2 = sec1.copy()
+sec2.translate(App.Vector(0, -(f_w + P["sec_port_l"]), 0))
+sec_ports = sec1.fuse(sec2)
+sec_ports_obj = add_obj(sec_ports, "Puertos_Secundarios", color=(0.7,0.9,0.7))
+
+# Agrupar todo en un grupo "Spacecraft"
+group = doc.addObject("App::DocumentObjectGroup", "Spacecraft")
+for o in doc.Objects:
+    # evitar agregar el grupo dentro de si mismo
+    if o.Name != group.Name:
+        group.addObject(o)
+
+# Recalcular y ajustar vista
+doc.recompute()
+Gui.ActiveDocument.ActiveView.viewAxonometric()
+Gui.SendMsgToActiveView("ViewFit")
+
+# Calcular volúmenes y masas estimadas
+summary = []
+for o in doc.Objects:
+    if hasattr(o, 'Shape') and o.Shape is not None:
+        try:
+            vol_mm3 = o.Shape.Volume
+            # elegir densidad aproximada por nombre
+            if "Blindaje_Capa_1" in o.Name:
+                dens = DENS["Aluminium"]
+            elif "Blindaje_Capa_2" in o.Name:
+                dens = DENS["Hydrogen"]
+            elif "Blindaje_Capa_3" in o.Name:
+                dens = DENS["Tungsten"]
+            elif "Reactor" in o.Name:
+                dens = DENS["Tungsten"]
+            else:
+                dens = DENS["Aluminium"]
+            mass_kg = mass_from_volume_mm3(vol_mm3, dens)
+            summary.append((o.Label, vol_mm3, mass_kg))
+        except Exception as e:
+            # algunos objetos (grupos) no tienen volumen
+            pass
+
+# Imprimir resumen compacto
+print("--- Resumen de volúmen y masa (estimada) ---")
+for label, vol, m in summary:
+    print(f"{label:25s} | Volumen: {vol:12,.0f} mm^3 | Masa aprox: {m:10.2f} kg")
+
+print("Macro DFD_v2_improved finalizada. Revisa el grupo 'Spacecraft' en el panel de objetos.")

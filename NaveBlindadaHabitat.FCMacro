@@ -1,0 +1,462 @@
+import FreeCAD as App
+import Part, math
+
+doc = App.newDocument("Estacion_Realista_XTREME")
+ALL = []
+
+# -------------------------
+# Parámetros principales
+# -------------------------
+P = {
+    # Núcleo
+    "core_D": 5.2, "core_L": 20.0,
+    "frames_n": 11, "frame_rad": 0.12, "frame_shell": 0.06,
+
+    # Nodos/túneles/cúpula
+    "node_front_D": 5.4, "node_rear_D": 4.6, "cupola_D": 2.0,
+    "cupola_shutters_n": 6, "cupola_shutter_thk": 0.02,
+    "tunnel_D": 2.1, "tunnel_L": 6.0,
+
+    # TPS + Whipple + MLI + faldas
+    "tps_D": 5.2, "tps_thk": 0.14, "tps_gap": 1.5,
+    "wh_layers": 6, "wh_gap_start": 0.55, "wh_gap_step": 0.12,
+    "wh_base_D": 6.4, "wh_tip_D": 0.9, "wh_len": 2.8,
+    "faldon_h": 0.8, "faldon_scale": 1.32,
+    "mli_shells": 4, "mli_t_each": 0.008,
+
+    # Paredes de agua/PE (blindaje vivo)
+    "water_torus_R": 9.2, "water_torus_r": 1.6,
+    "water_wall_t": 0.16,  # cilindro delgado alrededor del core (proxy)
+
+    # Hábitats AHI
+    "ahi_torus_R": 11.0, "ahi_torus_r": 2.0, "ahi_shell_t": 0.08, "ahi_Z": -0.6,
+    "ahi_sphere_D": 4.2, "ahi_cyl_D": 4.4, "ahi_cyl_L": 7.5,
+
+    # Potencia y térmico
+    "wing_L": 32.0, "wing_W": 9.5, "wing_t": 0.05, "wing_Z": 1.1,
+    "mast_R": 12.0, "mast_r": 0.18,
+    "rad_W": 6.0, "rad_H": 3.0, "rad_t": 0.045, "rad_rings": 2, "rads_per_ring": 6,
+    "rad_bumper_gap": 0.18, "rad_bumper_t": 0.018,
+    "solar_cover_t": 0.006,  # capa AO/ITO sobre paneles
+    "cryo_W": 4.2, "cryo_H": 4.2, "cryo_t": 0.032, "cryo_Z": -1.2,
+
+    # E-/Mag-sail (proxies)
+    "booms": 6, "boom_L": 26.0, "boom_D": 0.18,
+    "tethers_per_boom": 6, "tether_D": 0.006, "tether_len": 80.0, "tether_fan": 22.0,
+    "magsail_R_true": 5000.0, "magsail_scale": 1/2500.0, "magsail_r_proxy": 0.07, "magsail_reels": 10,
+
+    # Embudos
+    "scoop_len": 9.0, "scoop_base_D": 7.2, "scoop_tip_D": 1.2, "scoop_layers": 2,
+
+    # ISRU/plasma y tanques
+    "isru_L": 10.0, "isru_W": 6.0, "isru_H": 3.0, "isru_Z": -1.0,
+    "reactor_cols": 3, "reactor_rows": 2, "reactor_D": 1.2, "reactor_H": 2.6,
+    "chimney_D": 0.6, "chimney_H": 2.0,
+
+    # Tanques modulares con saddles
+    "tanks_per_side": 3,
+    "tank_O2_D": 2.2, "tank_O2_L": 4.0,
+    "tank_H2_D": 1.6, "tank_H2_L": 3.0,
+    "tank_CH4_D": 1.8, "tank_CH4_L": 3.2,
+    "saddle_W": 0.3, "saddle_t": 0.06,
+
+    # Propulsión mínima y redundancias
+    "thruster_HO_count": 6, "thruster_HO_d": 0.28, "thruster_HO_L": 0.7,
+    "thruster_RJ_count": 12, "thruster_RJ_d": 0.12, "thruster_RJ_L": 0.35,
+    "pm_z_aft": -0.4, "pm_z_fwd": 0.4,
+    "prop_manifold_R": 3.2, "prop_line_d": 0.05, "prop_loops": 2,
+
+    # Antenas/atraque
+    "hga_D": 2.2, "hga_prof": 0.24, "dock_D": 1.4, "dock_L": 1.2,
+
+    # Robots/raíles
+    "arm_seg_L": 3.0, "arm_seg_D": 0.32, "arms": 2,
+    "freeflyer_L": 0.6,
+    "rail_count": 8, "rail_R": 3.2, "rail_r": 0.05
+}
+
+# -------------------------
+# Utilidades geométricas
+# -------------------------
+def add(shape, name, base=(0,0,0), rot=None, mat=None, load=None):
+    o = doc.addObject("Part::Feature", name)
+    o.Shape = shape
+    o.Placement = App.Placement(App.Vector(*base), rot or App.Rotation())
+    if mat:
+        try:
+            o.addProperty("App::PropertyString","MaterialHint","FEM","Material hint").MaterialHint = mat
+        except Exception: pass
+    if load:
+        try:
+            o.addProperty("App::PropertyString","LoadHint","FEM","Load/case hint").LoadHint = load
+        except Exception: pass
+    ALL.append(o); return o
+
+def cyl(d,h): return Part.makeCylinder(d/2.0, h)
+def sph(d): return Part.makeSphere(d/2.0)
+def box(L,W,H): return Part.makeBox(L,W,H)
+def torus(R,r): return Part.makeTorus(R,r)
+
+def casquete(d, thk):
+    R = d/2.0
+    sp = Part.makeSphere(R)
+    cut = box(2*R,2*R,R); cut.translate(App.Vector(-R,-R,0))
+    cap = sp.cut(cut)
+    if thk>0:
+        sp2 = Part.makeSphere(max(R - thk, R*0.6))
+        cap_in = sp2.cut(cut)
+        return cap.cut(cap_in)
+    return cap
+
+def tronco_cono(d1,d2,h):
+    return Part.makeCone(d1/2.0, d2/2.0, h)
+
+def torus_shell(R, r, t):
+    outer = Part.makeTorus(R, r)
+    inner = Part.makeTorus(R, max(r - t, r*0.6))
+    return outer.cut(inner)
+
+# -------------------------
+# Subsistemas base
+# -------------------------
+def core_and_frames():
+    D,L = P["core_D"], P["core_L"]
+    c = cyl(D, L); c.translate(App.Vector(0,0,-L/2.0))
+    f = sph(D); f.translate(App.Vector(0,0,L/2.0))
+    b = sph(D); b.translate(App.Vector(0,0,-L/2.0))
+    body = c.fuse(f).fuse(b)
+    add(body, "Core_Bus", mat="Al-Li/CFRP")
+
+    for i in range(P["frames_n"]):
+        z = -L/2.0 + (i+1)*(L/(P["frames_n"]+1))
+        ring = torus_shell(D/2.0 - 0.06, P["frame_rad"], P["frame_shell"])
+        add(ring, f"Frame_{i+1}", base=(0,0,z), mat="Al-Li frame")
+
+def nodes_cupola_tunnels():
+    zf = P["core_L"]/2.0 - 0.7
+    add(sph(P["node_front_D"]), "Node_Front", base=(0,0,zf), mat="Al-Li/CFRP")
+    add(sph(P["node_rear_D"]), "Node_Rear", base=(0,0,-P["core_L"]/2.0 + 0.6), mat="Al-Li")
+
+    # Cupola con compuertas (shutters)
+    cup = Part.makeSphere(P["cupola_D"]/2.0)
+    cut = box(2,2,2); cut.translate(App.Vector(-1,-1,0))
+    hemi = cup.cut(cut); hemi.rotate(App.Vector(0,0,0), App.Vector(1,0,0), 90)
+    add(hemi, "Cupola", base=(0, -(P["node_front_D"]/2.0 - P["cupola_D"]/4.0), zf), mat="Glass/Al frame")
+    # Compuertas radiales
+    Rsh = P["cupola_D"]/2.0
+    for i in range(P["cupola_shutters_n"]):
+        ang = i*360.0/P["cupola_shutters_n"]
+        leaf = box(Rsh, P["cupola_shutter_thk"], Rsh/3.0)
+        leaf.translate(App.Vector(0,-P["cupola_shutter_thk"]/2.0, -Rsh/6.0))
+        o = add(leaf, f"Cupola_Shutter_{i+1}", base=(0, -(P["node_front_D"]/2.0 - P["cupola_D"]/4.0), zf), mat="Al/CMCs+ITO")
+        o.Placement = App.Placement(o.Placement.Base, App.Rotation(App.Vector(0,0,1), ang))
+
+    # Túnel dorsal
+    t = cyl(P["tunnel_D"], P["tunnel_L"])
+    t.rotate(App.Vector(0,0,0), App.Vector(0,1,0), 90)
+    add(t, "Tunnel_Dorsal", base=(P["core_D"]/2.0, 0, 0.2), mat="Al-Li/CFRP")
+
+def docking_ports():
+    d,L = P["dock_D"], P["dock_L"]; R = P["node_front_D"]/2.0; z = P["core_L"]/2.0 - 0.7
+    dirs = [(1,0,0),(-1,0,0),(0,1,0),(0,-1,0),(0,0,1),(0,0,-1)]
+    for i,(ix,iy,iz) in enumerate(dirs):
+        p = cyl(d,L)
+        if ix!=0: axis=App.Vector(0,1,0); ang = 90 if ix>0 else -90
+        elif iy!=0: axis=App.Vector(1,0,0); ang = -90 if iy>0 else 90
+        else: axis=App.Vector(1,0,0); ang = 0 if iz>0 else 180
+        p.rotate(App.Vector(0,0,0), axis, ang)
+        base = App.Vector(ix*R, iy*R, z)
+        p.translate(base.add(App.Vector(ix*(L*0.3), iy*(L*0.3), iz*(L*0.3))))
+        add(p, f"Dock_{i+1}", mat="IDSS Ring")
+
+def shields_blindajes():
+    # TPS cerámico/UHTC
+    cap = casquete(P["tps_D"], P["tps_thk"])
+    add(cap, "TPS_Cap", base=(0,0,P["core_L"]/2.0 + P["tps_gap"]), mat="RCC/UHTC")
+
+    # Whipple curvo multicapa (espaciamiento gradual)
+    for i in range(P["wh_layers"]):
+        scale = 1.0 - i*0.06
+        d1 = P["wh_base_D"]*scale; d2 = max(P["wh_tip_D"]*scale, 0.25); h = P["wh_len"]*scale
+        shell = tronco_cono(d1,d2,h)
+        inner = tronco_cono(max(d1-0.08, d2+0.1), max(d2-0.08, 0.2), h)
+        lay = shell.cut(inner)
+        z = P["core_L"]/2.0 + P["tps_gap"] - (P["wh_gap_start"] + i*P["wh_gap_step"])
+        add(lay, f"Whipple_{i+1}", base=(0,0,z), mat="Nextel/Kevlar/Al rear")
+
+    # MLI NG (capas anulares proxy)
+    for i in range(P["mli_shells"]):
+        t = P["mli_t_each"]
+        shell = torus_shell(P["core_D"]/2.0 + 0.03 + i*t, 0.25, 0.2)
+        add(shell, f"MLI_NG_{i+1}", base=(0,0,0), mat="MLI AO/UV resist")
+
+    # Falda aft
+    Dext = P["core_D"]*P["faldon_scale"]; Dint = P["core_D"]*1.05
+    outer = cyl(Dext, P["faldon_h"]); inner = cyl(Dint, P["faldon_h"]+1e-3)
+    faldon = outer.cut(inner)
+    add(faldon, "Falda_Aft", base=(0,0,-P["core_L"]/2.0 - P["faldon_h"]*0.8), mat="Al-Li shield")
+
+    # Paredes de agua/PE: toro y manga cilíndrica
+    w = torus(P["water_torus_R"], P["water_torus_r"])
+    add(w, "Agua_Toroidal", base=(0,0,-0.2), mat="H2O/PE")
+    # Manga cilíndrica delgada alrededor del core (proxy de paneles flexibles)
+    sleeve_outer = cyl(P["core_D"] + 2*P["water_wall_t"], P["core_L"]*0.75)
+    sleeve_inner = cyl(P["core_D"], P["core_L"]*0.75 + 1e-3)
+    sleeve = sleeve_outer.cut(sleeve_inner)
+    sleeve.translate(App.Vector(0,0,-(P["core_L"]*0.75)/2.0))
+    add(sleeve, "Agua_Manga", mat="H2O/PE")
+
+def habitats_AHI_water():
+    # Toro AHI + pasarela
+    T = torus_shell(P["ahi_torus_R"], P["ahi_torus_r"], P["ahi_shell_t"])
+    add(T, "AHI_Toro", base=(0,0,P["ahi_Z"]), mat="Vectran/CMCs")
+    tube = cyl(2.0, P["ahi_torus_R"]-P["core_D"]/2.0); tube.rotate(App.Vector(0,0,0), App.Vector(0,1,0), 90)
+    add(tube, "AHI_Pasarela", base=(P["core_D"]/2.0,0,P["ahi_Z"]), mat="Al-Li/CFRP")
+
+    # Módulos
+    add(sph(P["ahi_sphere_D"]), "AHI_Sfera", base=(-P["ahi_torus_R"]/2.3, 0, P["ahi_Z"]), mat="Inflatable/CMCs")
+    cm = cyl(P["ahi_cyl_D"], P["ahi_cyl_L"]); cm.translate(App.Vector(0,0,-P["ahi_cyl_L"]/2.0))
+    cF = sph(P["ahi_cyl_D"]); cF.translate(App.Vector(0,0,P["ahi_cyl_L"]/2.0))
+    cB = sph(P["ahi_cyl_D"]); cB.translate(App.Vector(0,0,-P["ahi_cyl_L"]/2.0))
+    hab = cm.fuse(cF).fuse(cB)
+    add(hab, "AHI_Cilindro", base=(P["ahi_torus_R"]/2.5, 0, P["ahi_Z"]), mat="Inflatable/CMCs")
+
+def wings_radiators_cryo():
+    # Alas solares + coating AO/ITO
+    L,W,t = P["wing_L"], P["wing_W"], P["wing_t"]; z = P["wing_Z"]
+    for i,sign in enumerate([1,-1]):
+        wing = box(L,W,t); wing.translate(App.Vector(-L/2.0,-W/2.0,0))
+        wing_obj = add(wing, f"AlaSolar_{i+1}", base=(0, sign*(P["ahi_torus_R"]+W/2.0+1.8), z), mat="Si/Glass/Al frame")
+        # Capa protectora (proxy)
+        cover = box(L,W,P["solar_cover_t"]); cover.translate(App.Vector(-L/2.0,-W/2.0,0))
+        add(cover, f"AlaSolar_Cover_{i+1}", base=wing_obj.Placement.Base, mat="AO-resist/ITO")
+
+        # Mástil curvo (proxy)
+        arc = torus(P["mast_R"], P["mast_r"])
+        cutA = box(100,100,100); cutA.translate(App.Vector(-50,-50,0))
+        cutB = box(100,100,100); cutB.translate(App.Vector(-50,-50,-100))
+        arc2 = arc.cut(cutA).cut(cutB)
+        add(arc2, f"Mastil_{i+1}", mat="CFRP")
+
+    # Radiadores + bumpers MMOD
+    for r in range(P["rad_rings"]):
+        R = P["ahi_torus_R"] + 3.0 + r*2.8
+        zR = -0.6 + r*0.9
+        for k in range(P["rads_per_ring"]):
+            ang = k*360.0/P["rads_per_ring"]
+            plate = box(P["rad_W"], P["rad_H"], P["rad_t"]); plate.translate(App.Vector(-P["rad_W"]/2.0,-P["rad_H"]/2.0,0))
+            o = add(plate, f"Radiador_{r+1}_{k+1}", mat="Ammonia loop/Al fin")
+            o.Placement = App.Placement(App.Vector(R*math.cos(math.radians(ang)), R*math.sin(math.radians(ang)), zR),
+                                        App.Rotation(App.Vector(0,0,1), ang))
+            # Bumper adelantado
+            bump = box(P["rad_W"]*0.9, P["rad_H"]*0.9, P["rad_bumper_t"])
+            bump.translate(App.Vector(-P["rad_W"]*0.45,-P["rad_H"]*0.45, P["rad_t"] + P["rad_bumper_gap"]))
+            add(bump, f"Rad_Bumper_{r+1}_{k+1}", base=o.Placement.Base, rot=o.Placement.Rotation, mat="Nextel/Kevlar bumper")
+
+    # Criorradiadores
+    for i,ang in enumerate([30,150,210,330]):
+        plate = box(P["cryo_W"], P["cryo_H"], P["cryo_t"])
+        o = add(plate, f"CryoRad_{i+1}", mat="Cryo 30-50K/Al fin")
+        R = P["core_D"]/2.0 + 1.2
+        o.Placement = App.Placement(App.Vector(R*math.cos(math.radians(ang)), R*math.sin(math.radians(ang)), P["cryo_Z"]),
+                                    App.Rotation(App.Vector(0,0,1), ang))
+
+def esail_magsail_scoops():
+    # E-sail booms + tethers
+    for i in range(P["booms"]):
+        ang = i*360.0/P["booms"]
+        beam = box(P["boom_L"], P["boom_D"], P["boom_D"])
+        o = add(beam, f"ES_Boom_{i+1}", mat="CFRP")
+        o.Placement = App.Placement(App.Vector(P["core_D"]/2.0, -P["boom_D"]/2.0, 0.0),
+                                    App.Rotation(App.Vector(0,0,1), ang))
+        for k in range(P["tethers_per_boom"]):
+            off = (k-(P["tethers_per_boom"]-1)/2.0)*(P["tether_fan"]/max(P["tethers_per_boom"]-1,1))
+            yaw = ang + off
+            t = cyl(P["tether_D"], P["tether_len"])
+            p = add(t, f"ES_Tether_{i+1}_{k+1}", mat="Al/BeCu wire")
+            p.Placement = App.Placement(App.Vector(P["core_D"]/2.0 + P["boom_L"], 0, 0.0),
+                                        App.Rotation(App.Vector(0,0,1), yaw))
+
+    # Magsail (proxy) + carretes
+    Rpx = P["magsail_R_true"]*P["magsail_scale"]
+    ring = torus(Rpx, P["magsail_r_proxy"])
+    add(ring, "Magsail_Proxy", base=(0,0,-0.8), mat="MgB2 HTS (proxy)")
+    Rr = P["core_D"]/2.0 + 1.0
+    for i in range(P["magsail_reels"]):
+        ang = i*360.0/P["magsail_reels"]
+        reel = cyl(0.9, 0.7)
+        o = add(reel, f"Magsail_Reel_{i+1}", mat="Cryo reel")
+        o.Placement = App.Placement(App.Vector(Rr*math.cos(math.radians(ang)), Rr*math.sin(math.radians(ang)), -0.7),
+                                    App.Rotation(App.Vector(0,0,1), ang))
+
+    # Embudos frontales
+    for i in range(P["scoop_layers"]):
+        d1 = P["scoop_base_D"]*(1.0 - i*0.1); d2 = P["scoop_tip_D"]*(1.0 - i*0.1); h = P["scoop_len"]*(1.0 - i*0.05)
+        fr = tronco_cono(d1,d2,h)
+        add(fr, f"Scoop_{i+1}", base=(0,0,P["core_L"]/2.0 + P["tps_gap"] + 0.25 + i*0.35), mat="Electrostatic/Mag funnel")
+
+def isru_plasma_tanks():
+    # Base ISRU
+    base = box(P["isru_L"], P["isru_W"], P["isru_H"]); base.translate(App.Vector(-P["isru_L"]/2.0,-P["isru_W"]/2.0,0))
+    yb = -P["ahi_torus_R"]-P["isru_W"]/2.0-3.0
+    add(base, "ISRU_Base", base=(0,yb,P["isru_Z"]), mat="Rack/Al frame")
+
+    # Reactores y chimeneas
+    cols, rows = P["reactor_cols"], P["reactor_rows"]; pitchX, pitchY = 2.2, 2.0
+    for r in range(rows):
+        for c in range(cols):
+            rx = (c-(cols-1)/2.0)*pitchX; ry = (r-(rows-1)/2.0)*pitchY
+            reactor = cyl(P["reactor_D"], P["reactor_H"])
+            add(reactor, f"PlasmaReactor_{r+1}_{c+1}", base=(rx, yb+ry, P["isru_Z"]+P["isru_H"]), mat="Cold plasma/SOEC")
+            chim = cyl(P["chimney_D"], P["chimney_H"])
+            add(chim, f"Chimenea_{r+1}_{c+1}", base=(rx, yb+ry, P["isru_Z"]+P["isru_H"]+P["reactor_H"]), mat="Exhaust/cond.")
+
+    # Hornos
+    for i,off in enumerate([-2.8, 2.8]):
+        horno = box(2.8, 2.0, 2.0); horno.translate(App.Vector(-1.4,-1.0,0))
+        add(horno, f"Horno_{i+1}", base=(off, yb, P["isru_Z"]+0.4), mat="RF/Induction")
+
+    # Tanques modulares con saddles y puertos rápidos
+    y0 = P["ahi_torus_R"]+4.5
+    for side in [-1,1]:
+        for i in range(P["tanks_per_side"]):
+            dx = (i-(P["tanks_per_side"]-1)/2.0)*(P["tank_O2_L"]+0.7)
+            tO2 = cyl(P["tank_O2_D"], P["tank_O2_L"]); tO2.rotate(App.Vector(0,0,0), App.Vector(0,1,0), 90)
+            add(tO2, f"Tank_O2_{'R' if side>0 else 'L'}_{i+1}", base=(dx, side*y0, 0.0), mat="O2 tank/Al")
+            # Saddles
+            s1 = box(P["saddle_W"], P["tank_O2_D"]*0.9, P["saddle_t"]); s1.translate(App.Vector(-P["saddle_W"]/2.0,-(P["tank_O2_D"]*0.45),0))
+            add(s1, f"Saddle_O2_{'R' if side>0 else 'L'}_{i+1}_A", base=(dx, side*y0, -P["tank_O2_D"]/2.0), mat="CFRP saddle")
+            s2 = box(P["saddle_W"], P["tank_O2_D"]*0.9, P["saddle_t"]); s2.translate(App.Vector(-P["saddle_W"]/2.0,-(P["tank_O2_D"]*0.45),0))
+            add(s2, f"Saddle_O2_{'R' if side>0 else 'L'}_{i+1}_B", base=(dx, side*y0, P["tank_O2_D"]/2.0 - P["saddle_t"]), mat="CFRP saddle")
+
+        tH2 = cyl(P["tank_H2_D"], P["tank_H2_L"]); tH2.rotate(App.Vector(0,0,0), App.Vector(0,1,0), 90)
+        add(tH2, f"Tank_H2_{'R' if side>0 else 'L'}", base=(0.0, side*(y0+2.0), -0.4), mat="H2 tank/Al")
+        tCH4 = cyl(P["tank_CH4_D"], P["tank_CH4_L"]); tCH4.rotate(App.Vector(0,0,0), App.Vector(0,1,0), 90)
+        add(tCH4, f"Tank_CH4_{'R' if side>0 else 'L'}", base=(0.0, side*(y0-2.0), -0.6), mat="CH4 tank/Al")
+
+    # Puertos rápidos de propelente cerca del nodo trasero
+    for i,ang in enumerate([0,90,180,270]):
+        port = cyl(0.35, 0.4)
+        o = add(port, f"QuickFuel_{i+1}", mat="Quick-disconnect")
+        R = P["node_rear_D"]/2.0 + 0.6
+        o.Placement = App.Placement(App.Vector(R*math.cos(math.radians(ang)), R*math.sin(math.radians(ang)), -P["core_L"]/2.0 + 0.8),
+                                    App.Rotation(App.Vector(0,0,1), ang))
+
+def station_min_propulsion():
+    # Clusters de resistojets (fwd/aft)
+    Rr = P["core_D"]/2.0 + 0.45
+    for ringZ, tag in [(P["pm_z_fwd"], "FWD"), (P["pm_z_aft"], "AFT")]:
+        for i in range(P["thruster_RJ_count"]):
+            ang = i*360.0/P["thruster_RJ_count"]
+            thr = cyl(P["thruster_RJ_d"], P["thruster_RJ_L"])
+            o = add(thr, f"RJ_{tag}_{i+1}", mat="Resistojet (H2/H2O/CO2/CH4)", load="RCS/Attitude")
+            o.Placement = App.Placement(App.Vector(Rr*math.cos(math.radians(ang)), Rr*math.sin(math.radians(ang)), ringZ),
+                                        App.Rotation(App.Vector(0,0,1), ang))
+
+    # Pods H2/O2 (reboost)
+    Rp = P["core_D"]/2.0 + 0.9
+    for i in range(P["thruster_HO_count"]):
+        ang = i*360.0/P["thruster_HO_count"]
+        pod = tronco_cono(P["thruster_HO_d"], 0.05, P["thruster_HO_L"])
+        o = add(pod, f"HO_Pod_{i+1}", mat="H2/O2 biprop", load="Reboost/ΔV")
+        o.Placement = App.Placement(App.Vector(Rp*math.cos(math.radians(ang)), Rp*math.sin(math.radians(ang)), -P["core_L"]/2.0+0.45),
+                                    App.Rotation(App.Vector(0,0,1), ang))
+
+    # Anillos de manifold de propelente (redundantes)
+    for loop in range(P["prop_loops"]):
+        Rm = P["prop_manifold_R"] + loop*0.25
+        ring = torus_shell(Rm, P["prop_line_d"]/2.0 + 0.02, 0.02)  # aro delgado
+        add(ring, f"Prop_Manifold_{loop+1}", base=(0,0,0.0 if loop%2==0 else -0.15), mat="Ti/SS manifold")
+
+    # Líneas duales radiales (proxy)
+    for i in range(12):
+        ang = i*360.0/12.0
+        L = P["core_D"]/2.0 + 0.9
+        line = cyl(P["prop_line_d"], L)
+        o = add(line, f"Prop_Line_{i+1}", mat="Dual line Ti/SS")
+        o.Placement = App.Placement(App.Vector(0,0,0.1), App.Rotation(App.Vector(0,1,0), 90))
+        o.Placement.Rotation = App.Rotation(App.Vector(0,0,1), ang).multiply(o.Placement.Rotation)
+
+def comms_and_robots():
+    # HGA
+    hga = Part.makeCone(P["hga_D"]/2.0, P["hga_D"]/12.0, P["hga_prof"])
+    add(hga, "HGA", base=(0,0,-P["core_L"]/2.0 - P["hga_prof"] - 0.6), mat="Ka-band dish/ITO")
+
+    # Antenas pequeñas
+    for i,ang in enumerate([45,135,225,315]):
+        mast = cyl(0.12, 1.2)
+        add(mast, f"Ant_Mast_{i+1}", base=((P["core_D"]/2.0+0.4)*math.cos(math.radians(ang)),
+                                           (P["core_D"]/2.0+0.4)*math.sin(math.radians(ang)), 0.8),
+            mat="S/Ka mast")
+
+    # Brazos robot
+    for a in range(P["arms"]):
+        baseY = (P["ahi_torus_R"]+2.2) * (1 if a==0 else -1); baseZ = 0.4
+        for s in range(3):
+            seg = cyl(P["arm_seg_D"], P["arm_seg_L"])
+            axis = App.Vector(0,1,0) if s%2==0 else App.Vector(1,0,0)
+            rot = App.Rotation(axis, 90)
+            add(seg, f"Arm{a+1}_Seg{s+1}", base=(P["core_D"]/2.0 + s*(P["arm_seg_L"]-0.4), baseY, baseZ + s*0.2),
+                rot=rot, mat="CFRP/Joint")
+
+    # Free-flyer
+    ff = box(P["freeflyer_L"], P["freeflyer_L"], P["freeflyer_L"])
+    ff.translate(App.Vector(-P["freeflyer_L"]/2.0,-P["freeflyer_L"]/2.0,-P["freeflyer_L"]/2.0))
+    add(ff, "FreeFlyer", base=(P["ahi_torus_R"]+2.0, 0, 0.2), mat="Inspection bot")
+
+def external_rails_and_curtains():
+    # Raíles exteriores circunferenciales
+    for i in range(P["rail_count"]):
+        z = -P["core_L"]/2.0 + (i+1)*(P["core_L"]/(P["rail_count"]+1))
+        ring = torus(P["rail_R"], P["rail_r"])
+        add(ring, f"Ext_Rail_{i+1}", base=(0,0,z), mat="CFRP rail")
+
+    # Cortinas MMOD desplegables (proxy paneles anulares)
+    for i in range(3):
+        R = P["core_D"]/2.0 + 1.1 + i*0.25
+        panel = torus_shell(R, 0.22, 0.02)
+        add(panel, f"MMOD_Curtain_{i+1}", base=(0,0,0.0 if i%2==0 else 0.2), mat="Nextel/Kevlar curtain")
+
+# -------------------------
+# Ensamblado
+# -------------------------
+core_and_frames()
+nodes_cupola_tunnels()
+docking_ports()
+shields_blindajes()
+habitats_AHI_water()
+wings_radiators_cryo()
+esail_magsail_scoops()
+isru_plasma_tanks()
+station_min_propulsion()
+comms_and_robots()
+external_rails_and_curtains()
+
+# -------------------------
+# Compound maestro
+# -------------------------
+comp = doc.addObject("Part::Compound", "Estacion_Realista_XTREME")
+comp.Links = ALL
+
+# -------------------------
+# Grupos por subsistema (para FEM/selección)
+# -------------------------
+groups = {
+    "GRP_Estructura": ["Core_", "Frame_", "Node_", "Tunnel_", "Ext_Rail_"],
+    "GRP_Habitats": ["AHI_"],
+    "GRP_Shields": ["TPS_", "Whipple_", "MLI_", "Falda_", "MMOD_Curtain_", "Agua_"],
+    "GRP_Potencia_Termico": ["AlaSolar_", "AlaSolar_Cover_", "Mastil_", "Radiador_", "Rad_Bumper_", "CryoRad_"],
+    "GRP_Propulsion": ["RJ_", "HO_Pod_", "Prop_", "QuickFuel_"],
+    "GRP_ISRU_Tanques": ["ISRU_", "PlasmaReactor_", "Chimenea_", "Horno_", "Tank_", "Saddle_"],
+    "GRP_Comms_Robots": ["HGA", "Ant_Mast_", "Arm", "FreeFlyer"],
+    "GRP_Velas": ["ES_", "Magsail_", "Scoop_"],
+    "GRP_Cupola": ["Cupola", "Cupola_Shutter_"],
+}
+for gname, prefixes in groups.items():
+    g = doc.addObject("App::DocumentObjectGroup", gname)
+    for o in ALL:
+        if any(o.Name.startswith(pfx) for pfx in prefixes):
+            g.addObject(o)
+
+doc.recompute()
+print("Generado: Estacion_Realista_XTREME con blindaje extremo, propulsión redundante y grupos FEM.")

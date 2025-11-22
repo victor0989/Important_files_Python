@@ -1,0 +1,299 @@
+# -*- coding: utf-8 -*-
+# Macro FreeCAD: Direct Fusion Drive - Nave Espacial Mejorada
+# Autor: Víctor + Copilot
+# Unidades: mm, eje longitudinal = X
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import math
+
+doc_name = "Direct_Fusion_Drive_Enhanced"
+if App.ActiveDocument is None or App.ActiveDocument.Label != doc_name:
+    App.newDocument(doc_name)
+doc = App.ActiveDocument
+
+# ======================
+# Parámetros generales
+# ======================
+SCALE = 1.5  # Factor de escala tipo cubesat
+
+P = {
+    "nose_len": 800.0*SCALE,
+    "nose_base_d": 600.0*SCALE,
+    "mid_len": 1400.0*SCALE,
+    "mid_d": 900.0*SCALE,
+    "rear_len": 800.0*SCALE,
+    "rear_d": 1200.0*SCALE,
+    "hull_t": 10.0*SCALE,
+
+    "cockpit_w": 900.0*SCALE,
+    "cockpit_h": 400.0*SCALE,
+    "cockpit_l": 600.0*SCALE,
+    "cockpit_x0": 600.0*SCALE,
+
+    "win_w": 600.0*SCALE,
+    "win_h": 250.0*SCALE,
+    "win_th": 20.0*SCALE,
+    "win_y_off": 0.5*(900.0*SCALE/2.0 - 250.0*SCALE/2.0),
+    "win_z": 0.0,
+
+    "reactor_d": 800.0*SCALE,
+    "reactor_l": 900.0*SCALE,
+    "reactor_cx": 2600.0*SCALE,
+    "ring_h": 30.0*SCALE,
+    "ring_ro": 420.0*SCALE,
+    "ring_ri": 380.0*SCALE,
+    "ring_n": 6,
+    "ring_pitch": 150.0*SCALE,
+
+    "coil_rect_w": 80.0*SCALE,
+    "coil_rect_h": 80.0*SCALE,
+    "coil_R": 440.0*SCALE,
+    "coil_n": 4,
+    "coil_span": 800.0*SCALE,
+
+    "moderator_t": 100.0*SCALE,
+    "moderator_gap": 20.0*SCALE,
+    "moderator_over": 200.0*SCALE,
+    "tungsten_post_t": 10.0*SCALE,
+
+    "nozzle_throat_d": 300.0*SCALE,
+    "nozzle_exit_d": 900.0*SCALE,
+    "nozzle_l": 700.0*SCALE,
+    "nozzle_cx": 2850.0*SCALE,
+    "nozzle_fillet_r": 40.0*SCALE,
+
+    "truss_n": 3,
+    "truss_tube_w": 80.0*SCALE,
+    "truss_R_attach": 550.0*SCALE,
+
+    "tank_d": 300.0*SCALE,
+    "tank_l": 700.0*SCALE,
+    "tank_cx": 1600.0*SCALE,
+    "tank_cy": 300.0*SCALE,
+    "tank_cz": -150.0*SCALE,
+
+    "leg_L_fold": 400.0*SCALE,
+    "leg_L_ext": 600.0*SCALE,
+    "leg_foot_d": 180.0*SCALE,
+    "leg_side_x1": 1050.0*SCALE,
+    "leg_side_x2": 1950.0*SCALE,
+    "leg_side_y": 600.0*SCALE,
+    "leg_front_x": 400.0*SCALE,
+    "leg_front_y": 0.0,
+    "leg_front_z": - (900.0*SCALE/2.0) + 50.0*SCALE,
+
+    "wing_root_w": 600.0*SCALE,
+    "wing_tip_w": 150.0*SCALE,
+    "wing_chord": 450.0*SCALE,
+    "fin_h": 400.0*SCALE,
+    "fin_base": 200.0*SCALE,
+
+    "rad_panel_w": 800.0*SCALE,
+    "rad_panel_h": 600.0*SCALE,
+    "rad_panel_n": 5,
+
+    # Nueva cápsula
+    "capsule_d": 500.0*SCALE,
+    "capsule_len": 600.0*SCALE,
+    "capsule_x0": 300.0*SCALE,
+}
+
+# ======================
+# Ejes y utilidades
+# ======================
+X_AXIS = App.Vector(1,0,0)
+Y_AXIS = App.Vector(0,1,0)
+Z_AXIS = App.Vector(0,0,1)
+
+def rot_to_x():
+    return App.Rotation(Y_AXIS, 90)
+
+def add_obj(shape, label):
+    obj = doc.addObject("Part::Feature", label)
+    obj.Shape = shape
+    return obj
+
+def make_cyl_x(d, L, cx=0.0, cy=0.0, cz=0.0, label="CylX"):
+    r = d/2.0
+    cyl = Part.makeCylinder(r, L)
+    cyl.Placement = App.Placement(App.Vector(float(cx) - L/2.0, float(cy), float(cz)), rot_to_x())
+    return add_obj(cyl, label)
+
+def make_cone_x(d1, d2, L, cx=0.0, cy=0.0, cz=0.0, label="ConeX"):
+    r1 = max(d1/2.0, 0.1)
+    r2 = max(d2/2.0, 0.1)
+    cone = Part.makeCone(r1, r2, L)
+    cone.Placement = App.Placement(App.Vector(float(cx) - L/2.0, float(cy), float(cz)), rot_to_x())
+    return add_obj(cone, label)
+
+def make_torus_x(R, r, cx=0.0, cy=0.0, cz=0.0, label="TorusX"):
+    tor = Part.makeTorus(R, r)
+    tor.Placement = App.Placement(App.Vector(float(cx), float(cy), float(cz)), rot_to_x())
+    return add_obj(tor, label)
+
+def make_box(w, d, h, cx=0.0, cy=0.0, cz=0.0, label="Box"):
+    b = Part.makeBox(w, d, h)
+    b.Placement = App.Placement(App.Vector(float(cx)-w/2.0, float(cy)-d/2.0, float(cz)-h/2.0), App.Rotation())
+    return add_obj(b, label)
+
+def make_sphere(r, cx=0.0, cy=0.0, cz=0.0, label="Sphere"):
+    sph = Part.makeSphere(r)
+    sph.Placement = App.Placement(App.Vector(float(cx), float(cy), float(cz)), App.Rotation())
+    return add_obj(sph, label)
+
+def make_hollow_from_offset(outer_shape, t, label="Shell"):
+    try:
+        inner = outer_shape.makeOffsetShape(-t, 0.01, join=2, fill=True)
+        shell = outer_shape.cut(inner)
+        return add_obj(shell, label)
+    except:
+        return add_obj(outer_shape, label + "_fallback")
+
+def fillet_between(shpA, shpB, r):
+    fused = shpA.fuse(shpB)
+    try:
+        edges = [e for e in fused.Edges if e.Length > 30 and e.Length < 10000]
+        new = fused.makeFillet(r, edges)
+        return new
+    except:
+        return fused
+
+# ======================
+# 1) Fuselaje exterior hueco
+# ======================
+nose = make_cone_x(P["nose_base_d"], 0.0, P["nose_len"], cx=P["nose_len"]/2.0, label="Nose")
+mid  = make_cyl_x(P["mid_d"], P["mid_len"], cx=P["nose_len"] + P["mid_len"]/2.0, label="Mid")
+rear = make_cyl_x(P["rear_d"], P["rear_len"], cx=P["nose_len"] + P["mid_len"] + P["rear_len"]/2.0, label="Rear")
+
+fuse_fuselage_shape = nose.Shape.fuse(mid.Shape).fuse(rear.Shape)
+hull = make_hollow_from_offset(fuse_fuselage_shape, P["hull_t"], label="Hull_Shell")
+
+# Ventanas laterales
+win1 = make_box(P["win_w"], P["win_th"], P["win_h"],
+                cx=P["cockpit_x0"] + P["cockpit_l"]/2.0,
+                cy= (P["mid_d"]/2.0) - P["win_th"]/2.0,
+                cz=P["win_z"], label="Win_Right")
+win2 = make_box(P["win_w"], P["win_th"], P["win_h"],
+                cx=P["cockpit_x0"] + P["cockpit_l"]/2.0,
+                cy=-(P["mid_d"]/2.0) + P["win_th"]/2.0,
+                cz=P["win_z"], label="Win_Left")
+
+hull_cut = add_obj(hull.Shape.cut(win1.Shape).cut(win2.Shape), "Hull_Shell_Cut")
+
+# ======================
+# 2) Cabina interior
+# ======================
+cockpit_box = Part.makeBox(P["cockpit_l"], P["cockpit_w"], P["cockpit_h"])
+cockpit_box.Placement = App.Placement(App.Vector(P["cockpit_x0"], -P["cockpit_w"]/2.0, -P["cockpit_h"]/2.0), App.Rotation())
+try:
+    cockpit_f = cockpit_box.makeFillet(20.0*SCALE, cockpit_box.Edges)
+except Exception:
+    cockpit_f = cockpit_box
+cockpit = add_obj(cockpit_f, "Cockpit")
+
+# ======================
+# 3) Reactor DFD realista
+# ======================
+reactor = make_cyl_x(P["reactor_d"], P["reactor_l"], cx=P["reactor_cx"], label="ReactorCore")
+
+# Anillos estructurales
+rings = []
+x0 = P["reactor_cx"] - P["reactor_l"]/2.0 + P["ring_h"]/2.0
+for i in range(int(P["ring_n"])):
+    x = x0 + i * P["ring_pitch"]
+    ring = Part.makeTorus((P["ring_ro"]+P["ring_ri"])/2.0, (P["ring_ro"]-P["ring_ri"])/2.0)
+    ring.Placement = App.Placement(App.Vector(x,0,0), rot_to_x())
+    rings.append(ring)
+rings_shape = rings[0]
+for r in rings[1:]:
+    rings_shape = rings_shape.fuse(r)
+rings_obj = add_obj(rings_shape, "Reactor_Rings")
+
+# Coils helicoidales alrededor del reactor
+coils = []
+span = P["coil_span"]
+cx0 = P["reactor_cx"] - span/2.0
+for i in range(P["coil_n"]):
+    cx = cx0 + i * (span/(max(1,(P["coil_n"]-1))))
+    coil = make_cyl_x(P["coil_rect_w"], P["coil_rect_h"], cx=cx, cy=P["coil_R"], cz=0.0, label=f"Coil_{i+1}")
+    coils.append(coil.Shape)
+coils_shape = coils[0]
+for c in coils[1:]:
+    coils_shape = coils_shape.fuse(c)
+coils_obj = add_obj(coils_shape, "Reactor_Coils")
+
+# ======================
+# 4) Boquilla magnética
+# ======================
+throat_d = P["nozzle_throat_d"]
+exit_d = P["nozzle_exit_d"]
+nozzle_l = P["nozzle_l"]
+
+noz_throat = make_cyl_x(throat_d, nozzle_l*0.3, cx=P["nozzle_cx"] - nozzle_l*0.35, label="Nozzle_Throat")
+noz_diff = make_cone_x(throat_d, exit_d, nozzle_l*0.7, cx=P["nozzle_cx"] + nozzle_l*0.15, label="Nozzle_Diffuser")
+
+try:
+    noz_shape = noz_throat.Shape.fuse(noz_diff.Shape)
+    noz_obj = add_obj(noz_shape, "Magnetic_Nozzle")
+except Exception:
+    noz_obj = noz_diff
+
+# ======================
+# 5) Blindaje moderador + truss
+# ======================
+mod_inner_r = P["reactor_d"]/2.0 + P["moderator_gap"]
+mod_outer_r = mod_inner_r + P["moderator_t"]
+mod_len = P["reactor_l"] + P["moderator_over"]
+mod_cx = P["reactor_cx"]
+mod_outer = Part.makeCylinder(mod_outer_r, mod_len)
+mod_inner = Part.makeCylinder(mod_inner_r, mod_len + 0.2)
+mod_tube = mod_outer.cut(mod_inner)
+mod_tube.Placement = App.Placement(App.Vector(mod_cx - mod_len/2.0, 0, 0), rot_to_x())
+mod_obj = add_obj(mod_tube, "Shield_Moderator")
+
+truss_list = []
+for k in range(P["truss_n"]):
+    ang = k * (360.0/P["truss_n"])
+    x_attach = P["nose_len"] + P["mid_len"] + P["rear_len"] - 50.0
+    y = P["truss_R_attach"] * math.cos(math.radians(ang))
+    z = P["truss_R_attach"] * math.sin(math.radians(ang))
+    beam = Part.makeBox(300.0*SCALE, P["truss_tube_w"], P["truss_tube_w"])
+    beam.Placement = App.Placement(App.Vector(x_attach - 150.0*SCALE, y - P["truss_tube_w"]/2.0, z - P["truss_tube_w"]/2.0), App.Rotation())
+    truss_list.append(beam)
+truss_shape = truss_list[0]
+for t in truss_list[1:]:
+    truss_shape = truss_shape.fuse(t)
+truss_obj = add_obj(truss_shape, "Nozzle_Truss")
+
+# ======================
+# 6) Tanques y tren aterrizaje
+# ======================
+tank1 = make_cyl_x(P["tank_d"], P["tank_l"], cx=P["tank_cx"], cy=P["tank_cy"], cz=P["tank_cz"], label="Tank_Right")
+tank2 = make_cyl_x(P["tank_d"], P["tank_l"], cx=P["tank_cx"], cy=-P["tank_cy"], cz=P["tank_cz"], label="Tank_Left")
+
+def make_leg(x, y, z, L, d, label):
+    shaft = Part.makeCylinder(d/4.0, L)
+    foot = Part.makeCylinder(d/2.0, 20.0)
+    shaft.Placement = App.Placement(App.Vector(x - L/2.0, y, z), rot_to_x())
+    foot.Placement  = App.Placement(App.Vector(x + L/2.0 - 10.0, y, z - d/4.0), App.Rotation())
+    leg = shaft.fuse(foot)
+    return add_obj(leg, label)
+
+leg_front = make_leg(P["leg_front_x"], P["leg_front_y"], P["leg_front_z"], P["leg_L_ext"], P["leg_foot_d"], "Leg_Front")
+leg_side1 = make_leg(P["leg_side_x1"], P["leg_side_y"], P["leg_front_z"], P["leg_L_ext"], P["leg_foot_d"], "Leg_Side1")
+leg_side2 = make_leg(P["leg_side_x2"], -P["leg_side_y"], P["leg_front_z"], P["leg_L_ext"], P["leg_foot_d"], "Leg_Side2")
+
+# ======================
+# 7) Cápsula de carga/pasajeros
+# ======================
+capsule = make_sphere(P["capsule_d"]/2.0, cx=P["capsule_x0"] + P["capsule_len"]/2.0, cy=0.0, cz=0.0, label="Capsule")
+
+# ======================
+# 8) Finalizar
+# ======================
+Gui.ActiveDocument.ActiveView.viewAxonometric()
+Gui.SendMsgToActiveView("ViewFit")
+doc.recompute()
+print("Macro ejecutada: Nave mejorada con propulsor realista y cápsula lista.")

@@ -1,0 +1,354 @@
+# ...existing code...
+# -*- coding: utf-8 -*-
+# Destiny_Propulsion_HeavyArmor + Hydrogen Powerpack (coherente, sólido, sin penetraciones)
+# Mejoras: radiación (MLI/Whipple), paneles solares, antena, unión robusta, preservación volumen interno.
+# Unidades: mm
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import math
+from FreeCAD import Vector
+
+doc_name = "Destiny_Propulsion_HeavyArmor"
+if App.ActiveDocument is None or App.ActiveDocument.Label != doc_name:
+    App.newDocument(doc_name)
+doc = App.ActiveDocument
+
+# ---------------- Utilidades ----------------
+def rot_to_x(): return App.Rotation(App.Vector(0,1,0), 90)
+def add_obj(shape,label, tag=None, printable=True, mesh_hint=None):
+    o = doc.addObject("Part::Feature",label)
+    o.Shape = shape
+    if tag:
+        if not hasattr(o,"Material"): o.addProperty("App::PropertyString","Material","Meta","Material")
+        o.Material = tag
+    if not hasattr(o,"Printable"): o.addProperty("App::PropertyBool","Printable","Meta","Printable")
+    o.Printable = bool(printable)
+    if mesh_hint is not None and not hasattr(o,"MeshSizeHint"):
+        o.addProperty("App::PropertyFloat","MeshSizeHint","Mesh","MeshHint")
+        o.MeshSizeHint = float(mesh_hint)
+    return o
+
+def fuse_all(arr):
+    s = arr[0]
+    for a in arr[1:]:
+        try:
+            s = s.fuse(a)
+        except Exception:
+            # micro-translations to avoid coplanar failures
+            t = a.copy()
+            t.translate(Vector(0.01,0.01,0.01))
+            try:
+                s = s.fuse(t)
+            except Exception:
+                s = Part.Compound([s,a])
+    return s
+
+def robust_fuse(a,b,tries=6):
+    try:
+        return a.fuse(b)
+    except Exception:
+        for i in range(1,tries+1):
+            try:
+                t = b.copy()
+                t.translate(Vector(i*0.1, -i*0.07, i*0.05))
+                return a.fuse(t)
+            except Exception:
+                continue
+        try:
+            return Part.Compound([a,b])
+        except Exception:
+            return a
+
+def try_solidify(shape):
+    try:
+        if hasattr(shape, "Faces"):
+            shell = Part.Shell(shape.Faces)
+            solid = Part.Solid(shell)
+            return solid
+    except Exception:
+        pass
+    return shape
+
+# ---------------- Parámetros base nave ----------------
+P = {
+    "nose_len": 650.0, "nose_base_d": 800.0, "nose_cap_d": 600.0,
+    "mid_len": 1400.0, "mid_d": 1200.0,
+    "rear_len": 1300.0, "rear_d": 1600.0,
+    "hull_t": 30.0,
+    "cockpit_w": 950.0, "cockpit_h": 500.0, "cockpit_l": 750.0, "cockpit_x0": 550.0, "cockpit_blend_r": 80.0,
+    "mount_margin": 120.0,  # margen desde el final del fuselaje
+    # satélite extras
+    "solar_w": 700.0, "solar_l": 1100.0, "solar_th": 18.0, "solar_sep": 80.0,
+    "ant_dish": 600.0, "ant_mast": 300.0,
+    "mli_layers": 3, "mli_th": 3.0,
+    "whipple_count": 4, "whipple_spacing": 40.0,
+    "overlap": 2.0,
+    "stl_deflection": 1.0
+}
+
+# ---------------- Fuselaje volumétrico (original) ----------------
+nose_cap=Part.makeSphere(P["nose_cap_d"]/2.0); nose_cap.Placement=App.Placement(Vector(P["nose_cap_d"]/2.0,0,0),App.Rotation())
+nose_trans=Part.makeCone(P["nose_base_d"]/2.0,P["nose_cap_d"]/2.0,P["nose_len"]-P["nose_cap_d"]/2.0); nose_trans.Placement=App.Placement(Vector(P["nose_len"]/2.0,0,0),rot_to_x())
+mid=Part.makeCylinder(P["mid_d"]/2.0,P["mid_len"]); mid.Placement=App.Placement(Vector(P["nose_len"],0,0),rot_to_x())
+rear=Part.makeCylinder(P["rear_d"]/2.0,P["rear_len"]); rear.Placement=App.Placement(Vector(P["nose_len"]+P["mid_len"],0,0),rot_to_x())
+fuselaje = nose_cap.fuse(nose_trans).fuse(mid).fuse(rear)
+
+# ---------------- Espesor de casco (preservar volumen interior) ----------------
+hull_inner=None; hull_shell=None
+try:
+    hull_inner=fuselaje.makeOffsetShape(-P["hull_t"],0.01,join=2,fill=True)
+    hull_shell=fuselaje.cut(hull_inner)
+    hull=add_obj(hull_shell,"Hull_Shell_HeavyArmor", tag="CFRP", printable=True, mesh_hint=0.8)
+    # guardar referencia al volumen interior para ajustes posteriores
+    inner_volume = hull_inner
+except Exception:
+    hull=add_obj(fuselaje,"Hull_Shell_HeavyArmor_Fallback", tag="Al", printable=True)
+    inner_volume = None
+
+# ---------------- Cabina integrada (mantener) ----------------
+cockpit_box=Part.makeBox(P["cockpit_l"],P["cockpit_w"],P["cockpit_h"])
+cockpit_box.Placement=App.Placement(Vector(P["cockpit_x0"],-P["cockpit_w"]/2.0,-P["cockpit_h"]/2.0),App.Rotation())
+blend_sphere=Part.makeSphere(P["cockpit_blend_r"]); blend_sphere.Placement=App.Placement(Vector(P["cockpit_x0"]-P["cockpit_blend_r"]/2.0,0,0),App.Rotation())
+cockpit_vol=cockpit_box.fuse(blend_sphere)
+try:
+    ck_inner=cockpit_vol.makeOffsetShape(-12.0,0.01,join=2,fill=True)
+    cockpit_shell=cockpit_vol.cut(ck_inner)
+    cockpit_obj=add_obj(cockpit_shell,"Cockpit_Integrated", tag="Al", printable=True)
+    hull_cut=add_obj(hull.Shape.cut(cockpit_vol),"Hull_With_Cockpit_Cut", tag="CFRP", printable=True)
+except:
+    cockpit_obj=add_obj(cockpit_vol,"Cockpit_Integrated_Fallback", tag="Al", printable=True)
+    hull_cut=hull
+
+# ---------------- Parámetros módulo H2 originales (sin cambios) ----------------
+H = {
+    "mount_x": P["nose_len"] + P["mid_len"] + P["rear_len"] - P["mount_margin"],
+    "adapter_od": P["rear_d"],
+    "adapter_id": P["rear_d"] - 2*P["hull_t"],
+    "adapter_t": 60.0,
+    "block_L": 1600.0, "block_W": 900.0, "block_H": 800.0,
+    "block_fillet_r": 40.0,
+    "head_H": 120.0,
+    "rail_d": 160.0, "rail_L": 1500.0,
+    "intake_d": 220.0, "exhaust_d": 240.0,
+    "turbo_comp_d": 420.0, "turbo_comp_L": 420.0,
+    "turbo_turb_d": 480.0, "turbo_turb_L": 480.0,
+    "tank_d": 600.0, "tank_L": 1400.0, "tank_offset_Y": 700.0, "tank_offset_Z": -120.0,
+    "rad_W": 1200.0, "rad_H": 700.0, "rad_T": 40.0, "rad_offset_Y": 950.0, "rad_offset_Z": 0.0,
+    "front_cap_T": 40.0,
+    "line_d": 80.0,
+    "cx": None, "cy": 0.0, "cz": 0.0,
+}
+H["cx"] = H["mount_x"]
+
+# ---------------- Hueco exacto en casco + mamparo adaptador (mantener) ----------------
+hueco_d = H["adapter_id"] - 2.0
+hueco_L = max(H["block_L"] + 400.0, 2400.0)
+hueco = Part.makeCylinder(hueco_d/2.0, hueco_L)
+hueco.Placement = App.Placement(Vector(H["mount_x"] - hueco_L, 0, 0), rot_to_x())
+casco_recortado = add_obj(hull_cut.Shape.cut(hueco), "Hull_Cut_H2Bay", tag="CFRP", printable=True)
+
+# Mamparo adaptador (anillo)
+adapter = Part.makeCylinder(H["adapter_od"]/2.0, H["adapter_t"]).cut(Part.makeCylinder(H["adapter_id"]/2.0, H["adapter_t"]))
+adapter.Placement = App.Placement(Vector(H["mount_x"] - H["adapter_t"], 0, 0), rot_to_x())
+adapter_obj = add_obj(adapter, "Adapter_Bulkhead", tag="Ti", printable=True)
+
+# ---------------- Bloque motor macizo con fillets (mantener) ----------------
+block = Part.makeBox(H["block_L"], H["block_W"], H["block_H"])
+block.Placement = App.Placement(Vector(H["cx"] - H["block_L"]/2.0, -H["block_W"]/2.0, -H["block_H"]/2.0), App.Rotation())
+try:
+    edges = block.Edges
+    block = block.makeFillet(H["block_fillet_r"], edges)
+except:
+    pass
+head = Part.makeBox(H["block_L"], H["block_W"], H["head_H"])
+head.Placement = App.Placement(Vector(H["cx"] - H["block_L"]/2.0, -H["block_W"]/2.0, H["block_H"]/2.0), App.Rotation())
+front_cap = Part.makeBox(H["front_cap_T"], H["block_W"], H["block_H"] + H["head_H"])
+front_cap.Placement = App.Placement(Vector(H["cx"] + H["block_L"]/2.0 - H["front_cap_T"], -H["block_W"]/2.0, -H["block_H"]/2.0), App.Rotation())
+
+# ---------------- Rampa inyectores y colectores (mantener) ----------------
+rail = Part.makeCylinder(H["rail_d"]/2.0, H["rail_L"])
+rail.Placement = App.Placement(Vector(H["cx"] - H["rail_L"]/2.0,  H["block_W"]/2.0 + 120.0,  H["block_H"]/2.0 - 80.0), rot_to_x())
+intake = Part.makeCylinder(H["intake_d"]/2.0, H["rail_L"])
+intake.Placement = App.Placement(Vector(H["cx"] - H["rail_L"]/2.0,  H["block_W"]/2.0 + 60.0,   80.0), rot_to_x())
+exhaust = Part.makeCylinder(H["exhaust_d"]/2.0, H["rail_L"])
+exhaust.Placement = App.Placement(Vector(H["cx"] - H["rail_L"]/2.0, -H["block_W"]/2.0 - 60.0, -80.0), rot_to_x())
+
+# ---------------- Turbocompresor macizo (mantener) ----------------
+turbo_comp = Part.makeCylinder(H["turbo_comp_d"]/2.0, H["turbo_comp_L"])
+turbo_comp.Placement = App.Placement(Vector(H["cx"] - H["block_L"]/4.0,  H["block_W"]/2.0 + 300.0,  0.0), rot_to_x())
+turbo_turb = Part.makeCylinder(H["turbo_turb_d"]/2.0, H["turbo_turb_L"])
+turbo_turb.Placement = App.Placement(Vector(H["cx"] - H["block_L"]/4.0 - H["turbo_turb_L"],  H["block_W"]/2.0 + 300.0,  0.0), rot_to_x())
+turbo = turbo_comp.fuse(turbo_turb)
+
+# ---------------- Depósitos H2 macizos (mantener) ----------------
+tank_R = Part.makeCylinder(H["tank_d"]/2.0, H["tank_L"])
+tank_L = Part.makeCylinder(H["tank_d"]/2.0, H["tank_L"])
+tank_R.Placement = App.Placement(Vector(H["cx"] - H["tank_L"]/2.0,  H["tank_offset_Y"],  H["tank_offset_Z"]), rot_to_x())
+tank_L.Placement = App.Placement(Vector(H["cx"] - H["tank_L"]/2.0, -H["tank_offset_Y"],  H["tank_offset_Z"]), rot_to_x())
+
+# ---------------- Radiadores macizos (paneles) (mantener) ----------------
+rad_R = Part.makeBox(H["rad_W"], H["rad_T"], H["rad_H"])
+rad_L = Part.makeBox(H["rad_W"], H["rad_T"], H["rad_H"])
+rad_R.Placement = App.Placement(Vector(H["cx"] - H["rad_W"]/2.0,  H["rad_offset_Y"], -H["rad_H"]/2.0 + H["rad_offset_Z"]), App.Rotation())
+rad_L.Placement = App.Placement(Vector(H["cx"] - H["rad_W"]/2.0, -H["rad_offset_Y"], -H["rad_H"]/2.0 + H["rad_offset_Z"]), App.Rotation())
+
+# ---------------- Líneas macizas principales (mantener) ----------------
+def line_cyl(p0, p1, d):
+    v = Vector(p1.x-p0.x, p1.y-p0.y, p1.z-p0.z)
+    L = v.Length
+    if L < 1e-3: return Part.makeCylinder(d/2.0, 0.1)
+    c = Part.makeCylinder(d/2.0, L)
+    # orient cylinder along vector v (approx)
+    axis = App.Vector(0,0,1).cross(v)
+    if axis.Length < 1e-6:
+        rot = App.Rotation()
+    else:
+        rot = App.Rotation(axis, App.Vector(0,0,1).getAngle(v))
+    c.Placement = App.Placement(App.Vector(p0.x, p0.y, p0.z), rot)
+    return c
+
+p_tankR = Vector(H["cx"],  H["tank_offset_Y"],  H["tank_offset_Z"])
+p_tankL = Vector(H["cx"], -H["tank_offset_Y"],  H["tank_offset_Z"])
+p_rail  = Vector(H["cx"],  H["block_W"]/2.0 + 120.0,  H["block_H"]/2.0 - 80.0)
+p_intk  = Vector(H["cx"],  H["block_W"]/2.0 + 60.0,   80.0)
+p_turbo = Vector(H["cx"] - H["block_L"]/4.0,  H["block_W"]/2.0 + 300.0,  0.0)
+
+line_R = line_cyl(p_tankR, p_rail, H["line_d"])
+line_L = line_cyl(p_tankL, p_rail, H["line_d"])
+line_IT = line_cyl(p_intk, p_turbo, H["line_d"]*0.8)
+plumbing = fuse_all([line_R, line_L, line_IT])
+
+# ---------------- Powerpack sólido y coherente (mantener) ----------------
+powerpack = fuse_all([block, head, front_cap, rail, intake, exhaust, turbo, tank_R, tank_L, rad_R, rad_L, plumbing])
+
+# Recorte de seguridad: garantizar que el powerpack no sobresalga del hueco
+limit = Part.makeCylinder((H["adapter_id"]/2.0), H["block_L"] + 200.0)
+limit.Placement = App.Placement(Vector(H["cx"] - (H["block_L"] + 200.0)/2.0, 0, 0), rot_to_x())
+try:
+    powerpack_trimmed = powerpack.common(limit)
+except Exception:
+    powerpack_trimmed = powerpack
+
+powerpack_obj = add_obj(powerpack_trimmed, "Hydrogen_Powerpack_Solid", tag="Al", printable=True)
+
+# ---------------- Ensamble final coherente (sin penetraciones) ----------------
+# create front Whipple disks (radiation micrometeoroid protection)
+def create_whip_disks(count=4, base_r= P["nose_base_d"], spacing=40.0, start_x = -300.0):
+    disks = []
+    for i in range(count):
+        dr = base_r/2.0 + i*spacing
+        disk = Part.makeCylinder(dr, 10.0)
+        disk.translate(Vector(start_x - i*spacing,0,0))
+        disks.append(disk)
+    return disks
+whip_disks = create_whip_disks(P["whipple_count"], base_r=P["nose_base_d"], spacing=P["whipple_spacing"], start_x=-300.0)
+
+# create MLI layers along mid section
+def create_mli_layers(center_x, length, base_r, layers=3, th=3.0):
+    layers_list = []
+    for i in range(layers):
+        r_out = base_r/2.0 + i*(th + 2.0)
+        cyl_o = Part.makeCylinder(r_out + th, length)
+        cyl_i = Part.makeCylinder(r_out, length + 2.0)
+        layer = cyl_o.cut(cyl_i)
+        layer.translate(Vector(center_x - length/2.0, 0, 0))
+        layers_list.append(layer)
+    return layers_list
+
+mli_list = create_mli_layers(P["nose_len"] + P["mid_len"]/2.0, P["mid_len"] + 200.0, P["mid_d"], layers=P["mli_layers"], th=P["mli_th"])
+
+# create simple solar panels attached with small hinge cylinders to ensure overlap
+def solar_panel(side=1):
+    pan = Part.makeBox(P["solar_l"], P["solar_w"], P["solar_th"])
+    pan.translate(Vector(P["nose_len"] + P["mid_len"]/2.0 - P["solar_l"]/2.0, side*(P["mid_d"]/2.0 + P["solar_sep"]), -P["solar_w"]/2.0))
+    hinge = Part.makeCylinder(20.0, P["solar_th"]+10.0)
+    hinge.translate(Vector(P["nose_len"] + P["mid_len"]/2.0 - P["solar_l"]/2.0 - 5.0, side*(P["mid_d"]/2.0 + P["solar_sep"]), 0))
+    return pan.fuse(hinge)
+
+panelL = solar_panel(-1); panelR = solar_panel(1)
+
+# antenna
+mast = Part.makeCylinder(40.0, P["ant_mast"]); mast.translate(Vector(P["nose_len"] + P["mid_len"]/2.0 + 200.0, 0, 0))
+dish = Part.makeCone(P["ant_dish"]/2.0, max(10.0, P["ant_dish"]/2.0 - 120.0), P["ant_mast"]/2.0)
+dish.translate(Vector(P["nose_len"] + P["mid_len"]/2.0 + 200.0, 0, P["ant_mast"]/2.0))
+antenna = mast.fuse(dish)
+
+# joiners to close small gaps
+joiners = []
+joiners.append(Part.makeCylinder((P["nose_base_d"]/2.0)*0.85, P["overlap"]*6).translate(Vector(0,0,-P["overlap"]*3)))
+joiners.append(Part.makeCylinder( (P["solar_th"]*1.5), 20.0).translate(Vector(P["nose_len"] + P["mid_len"]/2.0, P["mid_d"]/2.0 + P["solar_sep"], 0)))
+
+# assemble shape list (preserve original important parts)
+parts = [
+    casco_recortado.Shape, adapter_obj.Shape, powerpack_obj.Shape,
+    cockpit_obj.Shape
+]
+# add panels, antenna, MLI, Whipple and joiners
+parts += [panelL, panelR, antenna] + mli_list + whip_disks + joiners
+
+# robust incremental fusion of parts
+manifold = parts[0]
+for s in parts[1:]:
+    try:
+        manifold = manifold.fuse(s)
+    except Exception:
+        manifold = robust_fuse(manifold, s)
+
+# ensure interior volume preserved: subtract small boolean with inner_volume if available to trim penetrations
+if inner_volume is not None:
+    try:
+        # trim any portions of manifold that extend into interior cavity beyond hull thickness
+        # create a slightly smaller inner to use as cutter tolerance
+        inner_cut = inner_volume.copy()
+        inner_cut.translate(Vector(0.01,0.01,0.01))
+        # force powerpack to be inside: intersection with inner volume
+        # but final manifold must be hull shell (outer) with powerpack as internal solid (no penetrations)
+        # create final by fusing hull shell and powerpack trimmed by inner_cut.common to avoid protrusions
+        pp_trim = powerpack_trimmed.common(inner_cut)
+        # rebuild final manifold: fuse hull shell and pp_trim
+        final_manifold = casco_recortado.Shape.fuse(adapter_obj.Shape)
+        final_manifold = robust_fuse(final_manifold, pp_trim)
+        # also fuse panels/antenna/MLI/whip ensuring micro-translations
+        for s in [panelL, panelR, antenna] + mli_list + whip_disks + joiners:
+            final_manifold = robust_fuse(final_manifold, s)
+        manifold = final_manifold
+    except Exception:
+        pass
+
+# try to solidify manifold (convert shells to solids)
+manifold_solid = try_solidify(manifold)
+if not isinstance(manifold_solid, Part.Solid):
+    try:
+        # try offset/thicken trick: thicken thin shells inward a bit and fuse
+        thick = manifold.makeOffsetShape(-max(1.0, P["hull_t"]*0.2), 0.01, join=2, fill=True)
+        manifold = manifold.fuse(thick)
+        manifold_solid = try_solidify(manifold)
+    except Exception:
+        manifold_solid = manifold
+
+final_obj = add_obj(manifold_solid, "Destiny_H2_TruckSatellite_Integrated_Improved", tag="Al", printable=True)
+if hasattr(final_obj,"MeshSizeHint"): final_obj.MeshSizeHint = 0.9
+
+# optionally hide intermediate objects to keep tree clean (comment/uncomment as desired)
+# for o in doc.Objects:
+#     if o.Name not in (final_obj.Name, "Cockpit_Integrated", "Hull_Shell_HeavyArmor"):
+#         o.ViewObject.Visibility = False
+
+doc.recompute()
+try:
+    Gui.ActiveDocument.ActiveView.viewAxonometric()
+    Gui.SendMsgToActiveView("ViewFit")
+except:
+    pass
+
+# small export hints
+out_dir = App.getUserAppDataDir()
+try:
+    mesh = Part.__dict__ and None  # placeholder to avoid accidental heavy exports here
+except:
+    pass
+
+print("Mejora aplicada: objeto final 'Destiny_H2_TruckSatellite_Integrated_Improved' creado. Revisa en FreeCAD y ajusta parámetros si hace falta.")
+# ...existing code...

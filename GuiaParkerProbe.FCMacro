@@ -1,0 +1,371 @@
+import FreeCAD as App
+import Part
+import math
+
+# =========================
+# PARÁMETROS GLOBALES
+# =========================
+P = {
+    # Escudo térmico (TPS)
+    "TPS_diam": 2.30,                          # m (JHU/APL ~2.3 m)
+    "TPS_capas": [0.003, 0.096, 0.015],        # [capa blanca, núcleo, cara interior] m
+    "TPS_borde_chaf": 0.02,                    # chaflán de borde (m), 0 desactiva
+
+    # Bus hexagonal (circunscrito)
+    "bus_diam_circ": 0.95,                     # m
+    "bus_alt": 1.00,                           # m
+    "decks_niveles": [ -0.20, -0.55 ],         # z relativas (m) para bandejas internas
+
+    # Estructura base / aro blindado
+    "base_ring_ext": 1.10,                     # diámetro exterior (m)
+    "base_ring_int": 0.80,                     # diámetro interior (m)
+    "base_ring_alt": 0.08,                     # altura (m)
+
+    # Standoffs TPS-bus
+    "standoff_diam": 0.05,
+    "standoff_num": 6,
+    "gap_TPS_bus": 0.55,                       # separación (m)
+
+    # Paneles solares (cada ala ~1.1 x 0.7 m)
+    "panel_ancho": 0.70,                       # m (ancho Y)
+    "panel_largo": 1.10,                       # m (largo X)
+    "panel_esp": 0.018,                        # m
+    "panel_sep_bus": 0.06,                     # separación desde cara bus (m)
+    "bisagra_diam": 0.04, "bisagra_long": 0.25,
+    "tubo_rad_diam": 0.012,                    # tuberías en panel
+    "pump_box": (0.20, 0.12, 0.10),            # bomba/refrigeración en raíz del panel
+
+    # Radiadores aft
+    "rad_ancho": 0.35, "rad_largo": 0.85, "rad_esp": 0.015,
+
+    # WISPR (bafles y ventanas)
+    "wispr_cono_r1": 0.10, "wispr_cono_r2": 0.06, "wispr_cono_h": 0.25,
+    "wispr_box_w": 0.12, "wispr_box_h": 0.08, "wispr_box_t": 0.02,
+
+    # FIELDS antenas
+    "fields_ant_diam": 0.012, "fields_ant_long": 2.00,
+    "fields_ant_inshade_long": 1.20, "fields_ant_inshade_ang": 90,
+
+    # MAG boom
+    "mag_boom_diam": 0.025, "mag_boom_long": 3.50,
+
+    # Blindaje MMOD (Whipple) en caras del bus
+    "whipple_esp_front": 0.004, "whipple_sep": 0.08, "whipple_esp_rear": 0.006,
+    "whipple_caras": [0, 3],   # índices de caras hexagonales a proteger (0..5)
+
+    # Antenas de comunicaciones
+    "hga_diam": 0.60, "hga_prof": 0.10,        # plato HGA aft
+    "lga_diam": 0.10, "lga_alt": 0.08,         # dos LGAs en bus
+
+    # Propulsión (hidrazina, simplificada)
+    "tanque_diam": 0.45, "tanque_alt": 0.55,   # tanque elipsoide
+    "thruster_diam": 0.05, "thruster_long": 0.10, "thruster_ring_r": 0.55,
+
+    # Equipos internos representativos
+    "rwheel_d": 0.20, "rwheel_h": 0.10,        # 3 ruedas de reacción
+    "av_box": (0.30, 0.22, 0.12),              # caja aviónica típica
+
+    # Umbra (visual)
+    "umbra_h": 1.8, "umbra_semiangulo_deg": 10
+}
+
+doc = App.newDocument("Parker_Sonde_Completa")
+
+# =========================
+# UTILIDADES
+# =========================
+def add_obj(shape, name):
+    o = doc.addObject("Part::Feature", name)
+    o.Shape = shape
+    return o
+
+def hexagon_wire(radius):
+    pts = []
+    for i in range(6):
+        ang = math.radians(60*i + 30)
+        pts.append(App.Vector(radius*math.cos(ang), radius*math.sin(ang), 0))
+    pts.append(pts[0])
+    return Part.makePolygon(pts)
+
+def hexagon_face(radius):
+    return Part.Face(hexagon_wire(radius))
+
+def place_cyl_along(dir_vec, length, radius, base):
+    c = Part.makeCylinder(radius, length)
+    # Alinear eje del cilindro con dir_vec
+    z_axis = App.Vector(0,0,1)
+    v = App.Vector(dir_vec)
+    if v.Length == 0: v = z_axis
+    rot = App.Rotation(z_axis, v)
+    c.Placement = App.Placement(App.Vector(base), rot)
+    return c
+
+# =========================
+# CONSTRUCCIONES PRINCIPALES
+# =========================
+def escudo_TPS():
+    capas = []
+    z = 0.0
+    R = P["TPS_diam"]/2
+    for i, e in enumerate(P["TPS_capas"]):
+        disco = Part.makeCylinder(R, e)
+        if P["TPS_borde_chaf"] > 0 and e > P["TPS_borde_chaf"]:
+            cono = Part.makeCone(R, R - P["TPS_borde_chaf"], P["TPS_borde_chaf"])
+            cono.translate(App.Vector(0,0,e - P["TPS_borde_chaf"]))
+            disco = disco.cut(cono)
+        disco.translate(App.Vector(0,0,z))
+        capas.append(add_obj(disco, f"TPS_capa_{i+1}"))
+        z += e
+    return capas, z
+
+def bus_hex():
+    R = P["bus_diam_circ"]/2
+    face = hexagon_face(R)
+    sol = face.extrude(App.Vector(0,0,-P["bus_alt"]))
+    return add_obj(sol, "Bus_Hexagonal")
+
+def base_ring():
+    ext = Part.makeCylinder(P["base_ring_ext"]/2, P["base_ring_alt"])
+    intc = Part.makeCylinder(P["base_ring_int"]/2, P["base_ring_alt"] + 1e-3)
+    ring = ext.cut(intc)
+    ring.translate(App.Vector(0,0,-P["bus_alt"] - P["base_ring_alt"]))
+    return add_obj(ring, "Base_Ring_Blindado")
+
+def standoffs():
+    objs = []
+    R = P["bus_diam_circ"]/2 * 0.9
+    step = 360.0 / P["standoff_num"]
+    h = P["gap_TPS_bus"]
+    for i in range(P["standoff_num"]):
+        ang = math.radians(i*step)
+        x, y = R*math.cos(ang), R*math.sin(ang)
+        tubo = Part.makeCylinder(P["standoff_diam"]/2, h)
+        tubo.translate(App.Vector(x, y, -h))
+        objs.append(add_obj(tubo, f"Standoff_{i+1}"))
+    return objs
+
+def decks_internos():
+    objs = []
+    R = P["bus_diam_circ"]/2 * 0.95
+    for k, z in enumerate(P["decks_niveles"]):
+        face = hexagon_face(R)
+        deck = face.extrude(App.Vector(0,0,0.01))
+        deck.translate(App.Vector(0,0,z))
+        objs.append(add_obj(deck, f"Deck_{k+1}"))
+    return objs
+
+def panel_con_bisagra(lado=1):
+    objs = []
+    R = P["bus_diam_circ"]/2
+    # Bisagra (cilindro a lo largo de Y)
+    bis = Part.makeCylinder(P["bisagra_diam"]/2, P["bisagra_long"])
+    bis.Placement.Base = App.Vector(lado*R, -P["bisagra_long"]/2, -P["bus_alt"]*0.20)
+    bis.Placement.Rotation = App.Rotation(App.Vector(1,0,0), 90)
+    # Panel (eje X = largo)
+    pan = Part.makeBox(P["panel_largo"], P["panel_ancho"], P["panel_esp"])
+    pan.translate(App.Vector(lado*(R + P["panel_sep_bus"]), -P["panel_ancho"]/2, -P["bus_alt"]*0.20))
+    # Radiador en cara del panel (placa delgada)
+    rad = Part.makeBox(P["panel_largo"]*0.8, P["panel_ancho"]*0.35, P["panel_esp"]*0.8)
+    rad.translate(App.Vector(lado*(R + P["panel_sep_bus"] + 0.02), -P["panel_ancho"]*0.175, -P["bus_alt"]*0.20 + P["panel_esp"]))
+    # Tuberías paralelas
+    for t_idx, frac in enumerate([0.25, 0.6]):
+        tubo = Part.makeCylinder(P["tubo_rad_diam"]/2, P["panel_largo"]*0.9)
+        tubo.Placement.Base = App.Vector(lado*(R + P["panel_sep_bus"] + 0.01),
+                                         -P["panel_ancho"]*frac, -P["bus_alt"]*0.20 + P["panel_esp"])
+        tubo.Placement.Rotation = App.Rotation(App.Vector(1,0,0), 90)
+        objs.append(add_obj(tubo, f"TuboPanel_{'Der' if lado>0 else 'Izq'}_{t_idx+1}"))
+    # Caja de bomba en raíz
+    bx, by, bz = P["pump_box"]
+    pump = Part.makeBox(bx, by, bz)
+    pump.translate(App.Vector(lado*(R + P["panel_sep_bus"]) - lado*bx*0.1, -by/2, -P["bus_alt"]*0.20 - bz))
+    objs += [
+        add_obj(bis, f"Bisagra_{'Der' if lado>0 else 'Izq'}"),
+        add_obj(pan, f"Panel_{'Der' if lado>0 else 'Izq'}"),
+        add_obj(rad, f"RadPanel_{'Der' if lado>0 else 'Izq'}"),
+        add_obj(pump, f"PumpBox_{'Der' if lado>0 else 'Izq'}"),
+    ]
+    return objs
+
+def radiadores_aft():
+    # Radiadores en la “espalda” del bus (en sombra)
+    objs = []
+    R = P["bus_diam_circ"]/2
+    for lado in [-1, 1]:
+        rad = Part.makeBox(P["rad_largo"], P["rad_ancho"], P["rad_esp"])
+        rad.translate(App.Vector(-P["rad_largo"]/2, lado*(R*0.6 - P["rad_ancho"]/2), -P["bus_alt"]/3))
+        objs.append(add_obj(rad, f"RadiadorAft_{'Pos' if lado>0 else 'Neg'}"))
+    return objs
+
+def wispr_baffles(tps_top_z):
+    objs = []
+    for i, offy in enumerate([0.18, -0.18]):
+        cono = Part.makeCone(P["wispr_cono_r1"], P["wispr_cono_r2"], P["wispr_cono_h"])
+        cono.Placement.Base = App.Vector(0.0, offy, tps_top_z - 0.06)
+        cono.Placement.Rotation = App.Rotation(App.Vector(1,0,0), -90)
+        box = Part.makeBox(P["wispr_box_w"], P["wispr_box_t"], P["wispr_box_h"])
+        box.translate(App.Vector(-P["wispr_box_w"]/2, offy + P["wispr_cono_h"], tps_top_z - 0.08))
+        objs.append(add_obj(cono, f"WISPR_Cono_{i+1}"))
+        objs.append(add_obj(box, f"WISPR_Box_{i+1}"))
+    return objs
+
+def fields_antennas(tps_top_z):
+    objs = []
+    R = P["TPS_diam"]/2 * 0.85
+    for i, yaw in enumerate([45, 135, 225, 315]):
+        rod = Part.makeCylinder(P["fields_ant_diam"]/2, P["fields_ant_long"])
+        rod.Placement.Base = App.Vector(R*math.cos(math.radians(yaw)), R*math.sin(math.radians(yaw)), tps_top_z)
+        rod.Placement.Rotation = App.Rotation(App.Vector(0,1,0), -15)
+        objs.append(add_obj(rod, f"FIELDS_Ant_{i+1}"))
+    # Quinta antena en sombra
+    rod5 = Part.makeCylinder(P["fields_ant_diam"]/2, P["fields_ant_inshade_long"])
+    rod5.Placement.Base = App.Vector(0, 0, tps_top_z - 0.05)
+    rod5.Placement.Rotation = App.Rotation(App.Vector(1,0,0), P["fields_ant_inshade_ang"])
+    objs.append(add_obj(rod5, "FIELDS_Ant_Shade"))
+    return objs
+
+def mag_boom():
+    R = P["bus_diam_circ"]/2
+    boom = Part.makeCylinder(P["mag_boom_diam"]/2, P["mag_boom_long"])
+    boom.Placement.Base = App.Vector(R*0.7, 0, -P["bus_alt"])
+    boom.Placement.Rotation = App.Rotation(App.Vector(1,0,0), 180)
+    return add_obj(boom, "MAG_Boom")
+
+def whipple_shields(bus_obj):
+    # Proyectar placas en caras seleccionadas del hexágono
+    objs = []
+    R = P["bus_diam_circ"]/2
+    ancho = P["bus_diam_circ"]*0.85
+    alto = P["bus_alt"]*0.75
+    z0 = -P["bus_alt"] + (P["bus_alt"]-alto)/2
+    for idx, cara in enumerate(P["whipple_caras"]):
+        ang = math.radians(60*cara + 30)
+        nx, ny = math.cos(ang), math.sin(ang)
+        # Colocar placas a pequeña distancia normal al costado
+        off = R*0.98
+        base_x, base_y = nx*off, ny*off
+        # Placa frontal
+        p1 = Part.makeBox(ancho, P["whipple_esp_front"], alto)
+        p1.Placement.Base = App.Vector(base_x - ancho/2, base_y - P["whipple_esp_front"]/2, z0)
+        p1.Placement.Rotation = App.Rotation(App.Vector(0,0,1), math.degrees(ang))
+        # Placa trasera
+        p2 = Part.makeBox(ancho, P["whipple_esp_rear"], alto)
+        p2.Placement.Base = App.Vector(base_x - ancho/2, base_y - P["whipple_esp_front"]/2 - P["whipple_sep"], z0)
+        p2.Placement.Rotation = App.Rotation(App.Vector(0,0,1), math.degrees(ang))
+        objs.append(add_obj(p1, f"WhippleFront_{idx+1}"))
+        objs.append(add_obj(p2, f"WhippleRear_{idx+1}"))
+    return objs
+
+def antennas_comm():
+    # HGA aft + dos LGA en el bus
+    objs = []
+    r_ext = P["hga_diam"]/2
+    r_int = r_ext*0.2
+    hga = Part.makeCone(r_ext, r_int, P["hga_prof"])
+    hga.Placement.Base = App.Vector(0, 0, -P["bus_alt"] - P["hga_prof"])
+    objs.append(add_obj(hga, "HGA_Dish"))
+    for i, yaw in enumerate([90, 270]):
+        lga = Part.makeCylinder(P["lga_diam"]/2, P["lga_alt"])
+        r = P["bus_diam_circ"]/2*0.7
+        lga.Placement.Base = App.Vector(r*math.cos(math.radians(yaw)), r*math.sin(math.radians(yaw)), -P["bus_alt"]/3)
+        objs.append(add_obj(lga, f"LGA_{i+1}"))
+    return objs
+
+def propulsion_set():
+    objs = []
+    # Tanque (esfera alargada)
+    sph1 = Part.makeSphere(P["tanque_diam"]/2)
+    sph2 = Part.makeSphere(P["tanque_diam"]/2)
+    sph2.translate(App.Vector(0,0,-P["tanque_alt"]))
+    tanque = sph1.fuse(sph2)
+    tanque.translate(App.Vector(0,0,-P["bus_alt"]/2))
+    objs.append(add_obj(tanque, "Tanque_Prop"))
+    # Thrusters en anillo
+    R = P["thruster_ring_r"]
+    for i, ang in enumerate([30, 150, 210, 330]):
+        base = App.Vector(R*math.cos(math.radians(ang)), R*math.sin(math.radians(ang)), -P["bus_alt"]+0.05)
+        cono = Part.makeCone(P["thruster_diam"]/2, 0.005, P["thruster_long"])
+        cono.Placement.Base = base
+        objs.append(add_obj(cono, f"Thruster_{i+1}"))
+    return objs
+
+def equipos_internos():
+    objs = []
+    # Ruedas de reacción (triángulo)
+    r = 0.18
+    for i in range(3):
+        ang = math.radians(120*i)
+        cx, cy = r*math.cos(ang), r*math.sin(ang)
+        rw = Part.makeCylinder(P["rwheel_d"]/2, P["rwheel_h"])
+        rw.translate(App.Vector(cx, cy, -0.35))
+        objs.append(add_obj(rw, f"RWheel_{i+1}"))
+    # Caja aviónica
+    ax, ay, az = P["av_box"]
+    av = Part.makeBox(ax, ay, az)
+    av.translate(App.Vector(-ax/2, -ay/2, -0.15))
+    objs.append(add_obj(av, "Avionics_Box"))
+    # Bandejas/harness laterales
+    for i, y in enumerate([-0.30, 0.30]):
+        tray = Part.makeBox(0.50, 0.05, 0.02)
+        tray.translate(App.Vector(-0.25, y, -0.50))
+        objs.append(add_obj(tray, f"Harness_Tray_{i+1}"))
+    return objs
+
+def umbra_cono(tps_top_z):
+    if P["umbra_semiangulo_deg"] <= 0: return None
+    R0 = P["TPS_diam"]/2
+    h = P["umbra_h"]
+    theta = math.radians(P["umbra_semiangulo_deg"])
+    r2 = max(0.02, R0 - h*math.tan(theta))
+    cono = Part.makeCone(R0, r2, h)
+    cono.Placement.Base = App.Vector(0,0,0)
+    return add_obj(cono, "Umbra_Aprox")
+
+# =========================
+# ENSAMBLA TODO
+# =========================
+# 1) TPS
+tps_objs, tps_total_z = escudo_TPS()
+
+# 2) Bus y base
+bus_obj = bus_hex()
+base_obj = base_ring()
+
+# 3) Standoffs y decks
+standoff_objs = standoffs()
+deck_objs = decks_internos()
+
+# 4) Paneles solares (izq/der) con refrigeración y radiadores aft
+panel_izq = panel_con_bisagra(lado=-1)
+panel_der = panel_con_bisagra(lado=1)
+rad_aft = radiadores_aft()
+
+# 5) WISPR, FIELDS, MAG
+wispr_objs = wispr_baffles(tps_total_z)
+fields_objs = fields_antennas(tps_total_z)
+mag_obj = mag_boom()
+
+# 6) Blindaje MMOD
+whipple_objs = whipple_shields(bus_obj)
+
+# 7) Antenas de comunicaciones
+comm_objs = antennas_comm()
+
+# 8) Propulsión + equipos internos
+prop_objs = propulsion_set()
+equip_objs = equipos_internos()
+
+# 9) Umbra (visual)
+umbra_obj = umbra_cono(tps_total_z)
+
+# 10) Compound único
+all_objs = []
+for group in [tps_objs, [bus_obj, base_obj], standoff_objs, deck_objs, panel_izq, panel_der,
+              rad_aft, wispr_objs, fields_objs, [mag_obj], whipple_objs, comm_objs,
+              prop_objs, equip_objs]:
+    all_objs += group
+if umbra_obj: all_objs.append(umbra_obj)
+comp = doc.addObject("Part::Compound", "Satelite")
+comp.Links = all_objs
+
+doc.recompute()
+print("Sonda Parker paramétrica generada: ensamblaje completo + compuesto 'Satelite'.")

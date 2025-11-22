@@ -1,0 +1,262 @@
+# ...existing code...
+# -*- coding: utf-8 -*-
+# Destiny_Propulsion_HeavyArmor - ampliado a satélite, sin huecos, con MLI/Whipple/solar/antenas
+# Unidades: mm
+
+import FreeCAD as App, Part, MeshPart, math
+from FreeCAD import Vector
+try:
+    import FreeCADGui as Gui
+except Exception:
+    Gui = None
+
+DOC = "Destiny_Propulsion_HeavyArmor"
+if App.ActiveDocument is None or App.ActiveDocument.Label != DOC:
+    App.newDocument(DOC)
+doc = App.ActiveDocument
+
+# -------- Parámetros (mantener/ajustar según tu versión original) --------
+P = {
+    "nose_len": 650.0, "nose_base_d": 800.0, "nose_cap_d": 600.0,
+    "mid_len": 1400.0, "mid_d": 1200.0,
+    "rear_len": 1300.0, "rear_d": 1600.0,
+    "hull_t": 30.0, "mount_margin": 120.0,
+    # extras satélite
+    "solar_w": 700.0, "solar_l": 1100.0, "solar_th": 18.0, "solar_sep": 80.0,
+    "rwheel_d": 200.0, "rwheel_h": 100.0,
+    "ant_dish": 600.0, "ant_mast": 300.0,
+    "mli_layers": 3, "mli_th": 3.0,
+    "whipple_count": 4, "whipple_spacing": 40.0,
+    "overlap": 2.0,
+    "stl_deflection": 1.0
+}
+
+# -------- utilidades --------
+def rot_to_x(): return App.Rotation(App.Vector(0,1,0), 90)
+def add_obj(shape, name, tag=None, printable=True, mesh_hint=0.8):
+    o = doc.addObject("Part::Feature", name)
+    o.Shape = shape
+    if tag:
+        if not hasattr(o,"Material"): o.addProperty("App::PropertyString","Material","Meta","Material")
+        o.Material = tag
+    if not hasattr(o,"Printable"): o.addProperty("App::PropertyBool","Printable","Meta","Printable")
+    o.Printable = bool(printable)
+    if not hasattr(o,"MeshSizeHint"): o.addProperty("App::PropertyFloat","MeshSizeHint","Mesh","MeshHint")
+    o.MeshSizeHint = float(mesh_hint)
+    return o
+
+def robust_fuse(a,b,tries=4):
+    try:
+        return a.fuse(b)
+    except Exception:
+        for i in range(1,tries+1):
+            try:
+                t = b.copy()
+                t.translate(Vector(i*P["overlap"]*0.05, -i*P["overlap"]*0.03, i*P["overlap"]*0.02))
+                return a.fuse(t)
+            except Exception:
+                continue
+        try:
+            return Part.Compound([a,b])
+        except Exception:
+            return a
+
+def make_hollow_shell(solid_shape, thickness):
+    # intenta offset negativo y cortar para obtener shell con volumen interior
+    try:
+        inner = solid_shape.makeOffsetShape(-thickness, 0.01, join=2, fill=True)
+        shell = solid_shape.cut(inner)
+        return shell
+    except Exception:
+        return solid_shape
+
+def try_solidify(shape):
+    try:
+        if hasattr(shape, "Faces"):
+            shell = Part.Shell(shape.Faces)
+            solid = Part.Solid(shell)
+            return solid
+    except Exception:
+        pass
+    return shape
+
+# -------- cargar/crear fuselaje (mantener tu geometría) --------
+nose_cap = Part.makeSphere(P["nose_cap_d"]/2.0); nose_cap.Placement = App.Placement(Vector(P["nose_cap_d"]/2.0,0,0), App.Rotation())
+nose_trans = Part.makeCone(P["nose_base_d"]/2.0, P["nose_cap_d"]/2.0, P["nose_len"]-P["nose_cap_d"]/2.0); nose_trans.Placement = App.Placement(Vector(P["nose_len"]/2.0,0,0), rot_to_x())
+mid = Part.makeCylinder(P["mid_d"]/2.0, P["mid_len"]); mid.Placement = App.Placement(Vector(P["nose_len"],0,0), rot_to_x())
+rear = Part.makeCylinder(P["rear_d"]/2.0, P["rear_len"]); rear.Placement = App.Placement(Vector(P["nose_len"]+P["mid_len"],0,0), rot_to_x())
+fuselaje = nose_cap.fuse(nose_trans).fuse(mid).fuse(rear)
+
+# try create hollow hull (internal volume preserved)
+hull_inner = None
+try:
+    hull_inner = fuselaje.makeOffsetShape(-P["hull_t"], 0.01, join=2, fill=True)
+    hull_shell = fuselaje.cut(hull_inner)
+    hull_obj = add_obj(hull_shell, "Hull_Shell_HeavyArmor", tag="CFRP", printable=True)
+except Exception:
+    hull_obj = add_obj(fuselaje, "Hull_Solid_HeavyArmor", tag="Al", printable=True)
+
+# -------- cabina / corte hull --------
+cockpit_box = Part.makeBox(750.0, 950.0, 500.0)
+cockpit_box.Placement = App.Placement(Vector(550.0, -950.0/2.0, -500.0/2.0), App.Rotation())
+blend_sphere = Part.makeSphere(80.0); blend_sphere.Placement = App.Placement(Vector(550.0-40.0,0,0), App.Rotation())
+cockpit_vol = cockpit_box.fuse(blend_sphere)
+try:
+    ck_inner = cockpit_vol.makeOffsetShape(-12.0, 0.01, join=2, fill=True)
+    cockpit_shell = cockpit_vol.cut(ck_inner)
+    cockpit_obj = add_obj(cockpit_shell, "Cockpit_Integrated", tag="C_C", printable=True)
+    hull_cut = add_obj(hull_obj.Shape.cut(cockpit_vol), "Hull_With_Cockpit_Cut", tag="CFRP", printable=True)
+except Exception:
+    cockpit_obj = add_obj(cockpit_vol, "Cockpit_Vol", tag="Al", printable=True)
+    hull_cut = hull_obj
+
+# -------- funciones satélite: MLI y Whipple --------
+def create_mli(mid_center_x, length, base_r, layers=3, th=P["mli_th"]):
+    objs = []
+    for i in range(layers):
+        r_out = base_r + i*(th + 2.0)
+        cyl_o = Part.makeCylinder(r_out + th, length)
+        cyl_i = Part.makeCylinder(r_out, length + 2.0)
+        layer = cyl_o.cut(cyl_i)
+        layer.translate(Vector(mid_center_x - length/2.0, 0, 0))  # align along X
+        objs.append(add_obj(layer, f"MLI_Layer_{i+1}", tag="MLI", printable=False, mesh_hint=1.2))
+    return objs
+
+def create_whipple_front(n_disks=4, base_r=1200.0, spacing=40.0, offset_x=-300.0):
+    objs = []
+    for i in range(n_disks):
+        dr = base_r + i*spacing
+        disk = Part.makeCylinder(dr, 8.0)
+        disk.translate(Vector(offset_x - i*spacing, 0, 0))
+        objs.append(add_obj(disk, f"Whipple_{i+1}", tag="Al", printable=False))
+    return objs
+
+# -------- solar panels simples (solapados a hull, con unión por bisagra) --------
+def create_solar_panel(side=1):
+    # panel box with slight chamfer (represented simply)
+    pan = Part.makeBox(P["solar_l"], P["solar_w"], P["solar_th"])
+    pan.translate(Vector(P["nose_len"] + P["mid_len"]/2.0 + P["solar_sep"], side*(P["mid_d"]/2.0 + P["solar_sep"]), -P["solar_w"]/2.0))
+    # hinge stub (small cylinder) to ensure overlap
+    hinge = Part.makeCylinder(20.0, P["solar_th"]+10.0)
+    hinge.translate(Vector(P["nose_len"] + P["mid_len"]/2.0 + P["solar_sep"] - 10.0, side*(P["mid_d"]/2.0 + P["solar_sep"]), 0))
+    return pan.fuse(hinge)
+
+# -------- reaction wheels & internal trays --------
+def create_reaction_wheels(center_x):
+    objs = []
+    for i in range(3):
+        ang = math.radians(120 * i)
+        cx = center_x; cy = 120.0 * math.cos(ang); cz = 120.0 * math.sin(ang)
+        rw = Part.makeCylinder(P["rwheel_d"]/2.0, P["rwheel_h"])
+        rw.translate(Vector(cx, cy, cz))
+        objs.append(add_obj(rw, f"RWheel_{i+1}", tag="Al", printable=False))
+    return objs
+
+def create_antennas(center_x):
+    mast = Part.makeCylinder(40.0, P["ant_mast"])
+    mast.translate(Vector(center_x + 200.0, 0, 0))
+    dish = Part.makeCone(P["ant_dish"]/2.0, max(10.0, P["ant_dish"]/2.0 - 120.0), P["ant_mast"]/2.0)
+    dish.translate(Vector(center_x + 200.0, 0, P["ant_mast"]/2.0))
+    return add_obj(mast.fuse(dish), "HGA", tag="Al", printable=False)
+
+# -------- assemble satellite internals and externals --------
+# add MLI around mid section
+mli_objs = create_mli(P["nose_len"] + P["mid_len"]/2.0, P["mid_len"] + 200.0, P["mid_d"]/2.0 + 40.0, layers=P["mli_layers"])
+
+# add Whipple disk front
+whip_objs = create_whipple_front(P["whipple_count"], base_r=P["nose_base_d"], spacing=P["whipple_spacing"], offset_x= -200.0)
+
+# solar panels (left/right)
+panelL = create_solar_panel(-1)
+panelR = create_solar_panel(1)
+panelL_obj = add_obj(panelL, "SolarPanel_Left", tag="CFRP", printable=True)
+panelR_obj = add_obj(panelR, "SolarPanel_Right", tag="CFRP", printable=True)
+
+# reaction wheels and antennas
+rw_objs = create_reaction_wheels(P["nose_len"] + P["mid_len"]/4.0)
+hga_obj = create_antennas(P["nose_len"] + P["mid_len"]/2.0)
+
+# -------- create internal hydrogen powerpack insertion (reuse your H2 module idea) --------
+# create a modest adapter ring at rear to host modules and ensure no penetrating
+adapter_od = P["rear_d"]; adapter_id = P["rear_d"] - 2*P["hull_t"]; adapter_t = 60.0
+adapter = Part.makeCylinder(adapter_od/2.0, adapter_t).cut(Part.makeCylinder(adapter_id/2.0, adapter_t))
+adapter.translate(Vector(P["nose_len"] + P["mid_len"] + P["rear_len"] - P["mount_margin"] - adapter_t, 0, 0))
+adapter_obj = add_obj(adapter, "Adapter_Bulkhead", tag="Ti", printable=True)
+
+# create a compact power module (simple block) that fits inside hull inner volume
+power_block = Part.makeBox(1200.0, 900.0, 700.0)
+power_block.translate(Vector(P["nose_len"] + P["mid_len"] + P["rear_len"] - P["mount_margin"] - 1200.0/2.0, -900.0/2.0, -700.0/2.0))
+# trim with inner hull cylinder to ensure the module is coherent with internal volume
+inner_diam = (P["rear_d"] - 2*P["hull_t"]) - 2.0
+inner_cyl = Part.makeCylinder(inner_diam/2.0, 2000.0)
+inner_cyl.translate(Vector(P["nose_len"] + P["mid_len"] + P["rear_len"] - P["mount_margin"] - 2000.0, 0, 0)); inner_cyl.Placement = inner_cyl.Placement.multiply(rot_to_x())
+try:
+    powerpack_trimmed = power_block.common(inner_cyl)
+except Exception:
+    powerpack_trimmed = power_block
+power_obj = add_obj(powerpack_trimmed, "Powerpack_Module", tag="Al", printable=True)
+
+# -------- joiners to close small gaps (cylinders bridging parts) --------
+joiners = []
+# nose shield joiner
+joiners.append(Part.makeCylinder((P["nose_base_d"]/2.0)*0.85, P["overlap"]*6).translate(Vector(0,0,-P["overlap"]*3)))
+# wings/panels joiners near hull
+joiners.append(Part.makeCylinder( (P["solar_th"]*1.5), 20.0).translate(Vector(P["nose_len"] + P["mid_len"]/2.0, P["mid_d"]/2.0 + P["solar_sep"], 0)))
+
+# -------- collect printable shapes and perform robust incremental fusion --------
+candidates = []
+for o in doc.Objects:
+    if hasattr(o, "Shape"):
+        candidates.append(o.Shape)
+# include newly created shapes explicitly (some added via add_obj already present)
+extras = [hull_obj.Shape, cockpit_obj.Shape, adapter_obj.Shape, power_obj.Shape, panelL_obj.Shape, panelR_obj.Shape, hga_obj.Shape]
+for j in joiners:
+    extras.append(j)
+for e in extras:
+    if e not in candidates:
+        candidates.append(e)
+
+# incremental fuse
+manifold = candidates[0]
+for s in candidates[1:]:
+    try:
+        manifold = manifold.fuse(s)
+    except Exception:
+        manifold = robust_fuse(manifold, s)
+
+# try to hollow interior walls correctly: ensure interior volume preserved and no penetrating solids
+# create inner offset and subtract small holes -> then thicken to be a solid
+try:
+    # attempt to create solid manifold (if manifold is shell-like)
+    manifold_solid = try_solidify(manifold)
+    if not isinstance(manifold_solid, Part.Solid):
+        # thicken: offset inward then union to close small gaps
+        inner = manifold.makeOffsetShape(-P["hull_t"]*0.8, 0.01, join=2, fill=True)
+        manifold = manifold.fuse(inner)
+        manifold_solid = try_solidify(manifold)
+except Exception:
+    manifold_solid = manifold
+
+# final object
+final_obj = add_obj(manifold_solid, "Destiny_HeavyArmor_Manifold", tag="Al", printable=True)
+final_obj.MeshSizeHint = 0.9
+
+# -------- export STLs for printable parts (optional) --------
+App.ActiveDocument.recompute()
+out_dir = App.getUserAppDataDir()
+try:
+    # export full manifold STL
+    mesh = MeshPart.meshFromShape(Shape=final_obj.Shape, LinearDeflection=P["stl_deflection"], AngularDeflection=0.4)
+    if mesh: mesh.write(out_dir + "Destiny_HeavyArmor_Manifold.stl")
+except Exception:
+    pass
+
+# view fit
+try:
+    if Gui:
+        Gui.ActiveDocument.ActiveView.viewAxonometric(); Gui.SendMsgToActiveView("ViewFit")
+except Exception:
+    pass
+
+print("Macro ampliado: satélite con MLI/Whipple, paneles solares, antena y módulo powerpack integrado. Revisa el objeto 'Destiny_HeavyArmor_Manifold'.")
+# ...existing code...

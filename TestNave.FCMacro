@@ -1,0 +1,121 @@
+# -*- coding: utf-8 -*-
+# Macro FreeCAD: Nave Espacial Paramétrica
+# Autor: Víctor + ChatGPT
+# Descripción: Ensamblaje de nave espacial con cámara de plasma, motores, bobinas, payload y soporte
+# Unidades: metros, eje longitudinal = X
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import math
+
+doc_name = "NaveEspacialParametrica"
+doc = App.newDocument(doc_name)
+
+# ===========================
+# Parámetros principales
+# ===========================
+params = {
+    # Cuerpo principal / Cámara de plasma
+    "camara_diam": 3.0,
+    "camara_long": 8.0,
+    "camara_material": "Titanio",
+    # Bobinas de gradiente
+    "bobina_diam": 3.5,
+    "bobina_espesor": 0.05,
+    "bobina_capas": 4,
+    "bobina_material": "Nb3Sn",
+    # Motores
+    "motor_h2_diam": 1.5,
+    "motor_h2_long": 3.0,
+    "motor_plasma_diam": 2.0,
+    "motor_plasma_long": 3.0,
+    "motor_hibrido_diam": 1.8,
+    "motor_hibrido_long": 3.5,
+    # Payload
+    "payload_diam": 2.0,
+    "payload_long": 4.0,
+    # Soporte del payload
+    "soporte_base": 2.5,
+    "soporte_altura": 2.0,
+    # Tanques laterales
+    "tanque_diam": 0.5,
+    "tanque_long": 1.0,
+    # Tren de aterrizaje
+    "tren_plegado": 0.4,
+    "tren_extendido": 0.6,
+    "tren_base": 0.18,
+    # Alas / Aletas
+    "ala_raiz": 0.6,
+    "ala_punta": 0.15,
+    "ala_cuerda": 0.45,
+}
+
+# ===========================
+# Funciones de creación
+# ===========================
+def crear_cilindro(nombre, diam, long, pos, material="Titanio"):
+    cyl = Part.makeCylinder(diam/2, long)
+    obj = doc.addObject("Part::Feature", nombre)
+    obj.Shape = cyl
+    obj.Placement.Base = App.Vector(*pos)
+    obj.Label = f"{nombre} ({material})"
+    return obj
+
+def crear_bobinas(nombre, base_diam, espesor, capas, long, pos):
+    """Crea bobinas concéntricas alrededor de la cámara"""
+    bobinas = []
+    for i in range(capas):
+        diam = base_diam + i*espesor*2
+        cyl = Part.makeCylinder(diam/2, long)
+        obj = doc.addObject("Part::Feature", f"{nombre}_capa{i+1}")
+        obj.Shape = cyl
+        obj.Placement.Base = App.Vector(*pos)
+        obj.Label = f"{nombre}_capa{i+1}"
+        bobinas.append(obj)
+    return bobinas
+
+def crear_soporte_payload(pos, base, altura, material="Inconel 718"):
+    """Soporte tipo truss simple (4 pilares)"""
+    pilares = []
+    for x in [-base/2, base/2]:
+        for y in [-base/2, base/2]:
+            cyl = Part.makeCylinder(0.05, altura)
+            obj = doc.addObject("Part::Feature", f"pilar_{x}_{y}")
+            obj.Shape = cyl
+            obj.Placement.Base = App.Vector(pos[0]+x, pos[1]+y, pos[2])
+            obj.Label = f"Pilar ({material})"
+            pilares.append(obj)
+    return pilares
+
+# ===========================
+# Creación de componentes
+# ===========================
+# Cuerpo principal / cámara de plasma
+camara = crear_cilindro("CamaraPlasma", params["camara_diam"], params["camara_long"], [0,0,0], params["camara_material"])
+
+# Bobinas de gradiente
+bobinas = crear_bobinas("BobinaGradiente", params["bobina_diam"], params["bobina_espesor"], params["bobina_capas"], params["camara_long"], [0,0,0])
+
+# Motores (alineados en la parte trasera X)
+motor_h2 = crear_cilindro("MotorHidrogeno", params["motor_h2_diam"], params["motor_h2_long"], [0,0,-params["motor_h2_long"]], "Titanio+Ceramica")
+motor_plasma = crear_cilindro("MotorPlasma", params["motor_plasma_diam"], params["motor_plasma_long"], [0,0,-params["motor_h2_long"]-params["motor_plasma_long"]], "Tungsteno+Ceramica")
+motor_hibrido = crear_cilindro("MotorHibrido", params["motor_hibrido_diam"], params["motor_hibrido_long"], [0,0,-params["motor_h2_long"]-params["motor_plasma_long"]-params["motor_hibrido_long"]], "Titanio+Tungsteno")
+
+# Payload
+payload = crear_cilindro("Payload", params["payload_diam"], params["payload_long"], [0,0,params["camara_long"]/2], "Titanio+Grafeno")
+
+# Soporte del payload
+soporte_payload = crear_soporte_payload([0,0,params["camara_long"]/2 - 0.1], params["soporte_base"], params["soporte_altura"])
+
+# Tanques laterales
+tanque1 = crear_cilindro("TanqueOxigeno", params["tanque_diam"], params["tanque_long"], [params["camara_diam"]/2 + 0.3,0,params["camara_long"]/2], "Acero Inox 316L")
+tanque2 = crear_cilindro("TanqueHidrogeno", params["tanque_diam"], params["tanque_long"], [-params["camara_diam"]/2 - 0.3,0,params["camara_long"]/2], "Acero Inox 316L")
+
+# ===========================
+# Vista y actualización
+# ===========================
+doc.recompute()
+Gui.activeDocument().activeView().viewIsometric()
+Gui.SendMsgToActiveView("ViewFit")
+print("Nave ensamblada correctamente en FreeCAD.")

@@ -1,0 +1,155 @@
+# -*- coding: utf-8 -*-
+# Macro FreeCAD: Destiny Propulsion Variant
+# Autor: Víctor + GPT
+# Inspirado en naves de Destiny 1
+# Unidades: mm, eje longitudinal = X
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import math
+
+doc_name = "Destiny_Propulsion"
+if App.ActiveDocument is None or App.ActiveDocument.Label != doc_name:
+    App.newDocument(doc_name)
+doc = App.ActiveDocument
+
+# ========================
+# Parámetros principales
+# ========================
+P = {
+    # Fuselaje estilizado
+    "nose_len": 1200.0,
+    "nose_base_d": 400.0,
+    "mid_len": 1000.0,
+    "mid_d": 800.0,
+    "rear_len": 1000.0,
+    "rear_d": 1100.0,
+    "hull_t": 8.0,
+
+    # Cabina estilo Destiny
+    "cockpit_w": 600.0,
+    "cockpit_h": 350.0,
+    "cockpit_l": 500.0,
+    "cockpit_x0": 700.0,
+
+    # Reactor + propulsión
+    "reactor_d": 900.0,
+    "reactor_l": 1200.0,
+    "reactor_cx": 2600.0,
+    "nozzle_throat_d": 400.0,
+    "nozzle_exit_d": 1200.0,
+    "nozzle_l": 1000.0,
+    "nozzle_cx": 3200.0,
+
+    # Trusses reforzados
+    "truss_n": 4,
+    "truss_tube_w": 100.0,
+    "truss_R_attach": 650.0,
+
+    # Alas angulares
+    "wing_root_w": 800.0,
+    "wing_tip_w": 200.0,
+    "wing_chord": 600.0,
+    "fin_h": 600.0,
+    "fin_base": 250.0,
+
+    # Propulsores laterales
+    "side_thruster_d": 500.0,
+    "side_thruster_l": 800.0,
+    "side_thruster_x": 2400.0,
+    "side_thruster_y": 1000.0,
+    "side_thruster_z": 0.0,
+}
+
+# ========================
+# Utilidades básicas
+# ========================
+X_AXIS = App.Vector(1,0,0)
+Y_AXIS = App.Vector(0,1,0)
+Z_AXIS = App.Vector(0,0,1)
+
+def rot_to_x():
+    return App.Rotation(Y_AXIS, 90)
+
+def add_obj(shape, label):
+    obj = doc.addObject("Part::Feature", label)
+    obj.Shape = shape
+    return obj
+
+def make_cyl_x(d, L, cx=0.0, cy=0.0, cz=0.0, label="CylX"):
+    cyl = Part.makeCylinder(d/2.0, L)
+    cyl.Placement = App.Placement(App.Vector(cx - L/2.0, cy, cz), rot_to_x())
+    return add_obj(cyl, label)
+
+def make_cone_x(d1, d2, L, cx=0.0, cy=0.0, cz=0.0, label="ConeX"):
+    cone = Part.makeCone(d1/2.0, d2/2.0, L)
+    cone.Placement = App.Placement(App.Vector(cx - L/2.0, cy, cz), rot_to_x())
+    return add_obj(cone, label)
+
+# ========================
+# 1) Fuselaje estilizado
+# ========================
+nose = make_cone_x(P["nose_base_d"], 0.0, P["nose_len"], cx=P["nose_len"]/2.0, label="Nose")
+mid  = make_cyl_x(P["mid_d"], P["mid_len"], cx=P["nose_len"] + P["mid_len"]/2.0, label="Mid")
+rear = make_cyl_x(P["rear_d"], P["rear_len"], cx=P["nose_len"] + P["mid_len"] + P["rear_len"]/2.0, label="Rear")
+
+hull = add_obj(nose.Shape.fuse(mid.Shape).fuse(rear.Shape), "Hull")
+
+# ========================
+# 2) Cabina integrada
+# ========================
+cockpit = Part.makeBox(P["cockpit_l"], P["cockpit_w"], P["cockpit_h"])
+cockpit.Placement = App.Placement(App.Vector(P["cockpit_x0"], -P["cockpit_w"]/2.0, -P["cockpit_h"]/2.0), App.Rotation())
+cockpit_obj = add_obj(cockpit, "Cockpit")
+
+# ========================
+# 3) Reactor + boquilla
+# ========================
+reactor = make_cyl_x(P["reactor_d"], P["reactor_l"], cx=P["reactor_cx"], label="Reactor")
+nozzle = make_cone_x(P["nozzle_throat_d"], P["nozzle_exit_d"], P["nozzle_l"], cx=P["nozzle_cx"], label="Nozzle")
+
+# ========================
+# 4) Trusses estilo Destiny
+# ========================
+trusses = []
+for k in range(P["truss_n"]):
+    ang = k * (360.0 / P["truss_n"])
+    y = P["truss_R_attach"] * math.cos(math.radians(ang))
+    z = P["truss_R_attach"] * math.sin(math.radians(ang))
+    beam = Part.makeBox(400.0, P["truss_tube_w"], P["truss_tube_w"])
+    beam.Placement = App.Placement(App.Vector(P["reactor_cx"], y - P["truss_tube_w"]/2.0, z - P["truss_tube_w"]/2.0), App.Rotation())
+    trusses.append(beam)
+truss_shape = trusses[0]
+for t in trusses[1:]:
+    truss_shape = truss_shape.fuse(t)
+truss_obj = add_obj(truss_shape, "Trusses")
+
+# ========================
+# 5) Alas / aletas
+# ========================
+wing_r = make_cyl_x(40.0, P["wing_chord"], cx=P["nose_len"]+500.0, cy=P["mid_d"]/2.0+40.0, cz=0, label="Wing_Right")
+wing_l = make_cyl_x(40.0, P["wing_chord"], cx=P["nose_len"]+500.0, cy=-P["mid_d"]/2.0-40.0, cz=0, label="Wing_Left")
+fin = make_cone_x(P["fin_base"], 0.0, P["fin_h"], cx=P["nose_len"]+P["mid_len"]+P["rear_len"]-200.0, cz=0, label="Fin_Vertical")
+
+# ========================
+# 6) Propulsores laterales
+# ========================
+thr_r = make_cyl_x(P["side_thruster_d"], P["side_thruster_l"], cx=P["side_thruster_x"], cy=P["side_thruster_y"], cz=P["side_thruster_z"], label="SideThruster_Right")
+thr_l = make_cyl_x(P["side_thruster_d"], P["side_thruster_l"], cx=P["side_thruster_x"], cy=-P["side_thruster_y"], cz=P["side_thruster_z"], label="SideThruster_Left")
+
+# ========================
+# Grupo general
+# ========================
+grp = doc.addObject("App::Part", "Destiny_Ship")
+for o in [hull, cockpit_obj, reactor, nozzle, truss_obj, wing_r, wing_l, fin, thr_r, thr_l]:
+    grp.addObject(o)
+
+doc.recompute()
+try:
+    Gui.ActiveDocument.ActiveView.viewAxonometric()
+    Gui.SendMsgToActiveView("ViewFit")
+except Exception:
+    pass
+
+print("Macro Destiny completada: nave estilizada con énfasis en propulsión.")

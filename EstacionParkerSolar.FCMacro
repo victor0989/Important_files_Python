@@ -1,0 +1,490 @@
+# -*- coding: utf-8 -*-
+# Estación "Parker XL" — macro 100% ejecutable
+# Geometría estilo campana-extractor trapezoidal (rectángulos), bus, aros, paneles, radiadores, RCS, antenas, sensores
+
+import FreeCAD as App
+import Part
+import math
+
+try:
+    import FreeCADGui as Gui
+    HAS_GUI = True
+except Exception:
+    HAS_GUI = False
+
+DOC_NAME = "Parker_XL_Rect"
+
+# ----------------------------------------------------
+# Utilidades
+# ----------------------------------------------------
+def mm(x_m):
+    return float(x_m) * 1000.0
+
+def ensure_doc(name=DOC_NAME):
+    if App.ActiveDocument and App.ActiveDocument.Name == name:
+        doc = App.ActiveDocument
+        for o in list(doc.Objects):
+            try:
+                doc.removeObject(o.Name)
+            except Exception:
+                pass
+        return doc
+    for d in list(App.listDocuments().values()):
+        if d.Name == name:
+            App.closeDocument(d.Name)
+    return App.newDocument(name)
+
+def add_obj(shape, name, color=None, transparency=0):
+    obj = App.ActiveDocument.addObject("Part::Feature", name)
+    obj.Shape = shape
+    if HAS_GUI:
+        try:
+            if color is not None:
+                obj.ViewObject.ShapeColor = color
+            obj.ViewObject.Transparency = int(transparency)
+        except Exception:
+            pass
+    return obj
+
+def fuse_all(shapes):
+    shapes = [s for s in shapes if s is not None]
+    if not shapes:
+        return None
+    s = shapes[0]
+    for t in shapes[1:]:
+        try:
+            s = s.fuse(t)
+        except Exception:
+            pass
+    return s
+
+def cut_safe(a, b):
+    if a is None:
+        return None
+    if b is None:
+        return a
+    try:
+        return a.cut(b)
+    except Exception:
+        return a
+
+def rotate(shape, axis, angle_deg, center=App.Vector(0,0,0)):
+    sh = shape.copy()
+    sh.rotate(center, axis, angle_deg)
+    return sh
+
+def translate(shape, v):
+    sh = shape.copy()
+    sh.translate(v)
+    return sh
+
+# ----------------------------------------------------
+# Parámetros (metros)
+# ----------------------------------------------------
+P = dict(
+    crew = 22,
+
+    # Campana (secciones rectangulares YZ)
+    campana_front_w = 64.0,   # ancho Y total en boca
+    campana_front_h = 44.0,   # alto Z total en boca
+    campana_back_w  = 48.0,   # ancho Y total en base trasera
+    campana_back_h  = 30.0,   # alto Z total en base trasera
+    campana_depth   = 3.5,    # longitud de campana a lo largo de +X (se extiende hacia -X)
+    campana_wall_t  = 0.9,    # espesor total aproximado
+    lip_w           = 0.6,    # ancho del reborde frontal (margen Y/Z)
+    lip_t           = 0.2,    # grosor del reborde (en X)
+
+    # Aros rectangulares detrás del TPS (dos)
+    ring_gap        = 2.0,    # separación desde la boca (en -X)
+    ring_thick      = 0.8,    # espesor en X
+    ring_width      = 1.2,    # ancho de material del aro (margen Y/Z)
+    ring2_offset    = 2.5,    # distancia extra al segundo aro
+
+    # Hex-ring estructural (opcional, en plano YZ, extruido en X)
+    hex_outer_R     = 18.0,   # radio circunscrito exterior (Y/Z)
+    hex_inner_R     = 15.5,   # radio circunscrito interior
+    hex_thick       = 1.2,    # espesor en X
+    hex_x           = -8.0,   # posición X del hex-ring (sombra de la campana)
+
+    # Bus principal (sombra)
+    bus_len  = 48.0,
+    bus_w    = 10.0,
+    bus_h    = 10.0,
+    bus_x    = -35.0,         # centro del bus en X
+
+    # Paneles solares (ala Y+/Y-)
+    panel_len = 36.0,         # largo en Y
+    panel_w   = 8.0,          # ancho en Z
+    panel_th  = 0.12,         # espesor placa
+    panel_x   = -32.0,        # X de anclaje
+    panel_gap = 2.0,          # separación desde el bus
+    panel_grid_ny = 24,       # celdas Y
+    panel_grid_nz = 8,        # celdas Z
+    panel_groove  = 0.01,     # profundidad de ranura (m)
+
+    # Radiadores (abanico)
+    rad_count = 4,
+    rad_len = 14.0,
+    rad_w   = 4.0,
+    rad_th  = 0.10,
+    rad_x   = -46.0,
+    rad_z   = 7.0,
+    rad_fan_angle = 40.0,
+
+    # Tanques laterales (cilindros X)
+    tank_r = 1.4,
+    tank_l = 10.0,
+    tank_offset_y = 8.0,
+    tank_x = -36.0,
+
+    # RCS
+    rcs_cone_r1 = 0.35,
+    rcs_cone_r2 = 0.10,
+    rcs_cone_h = 0.8,
+
+    # Star trackers
+    st_box = (1.0, 0.8, 0.8),
+    st_lens_r = 0.25,
+    st_x = -30.0,
+    st_y = 6.0,
+    st_z = 4.0,
+
+    # Antenas
+    dish_r = 2.2,
+    dish_h = 0.9,
+    dish_x = -40.0,
+    whip_len = 16.0,
+    whip_r   = 0.05,
+
+    # Boom instrumentos
+    boom_len = 20.0,
+    boom_r   = 0.35,
+    boom_x0  = -55.0,
+    boom_angle = -10.0,
+
+    # Detalles de borde TPS
+    bolt_count = 80,
+    bolt_r = 0.12,
+    bolt_l = 0.28,
+    visor_span = 1.6,   # separación entre viseras
+    visor_w = 1.2,
+    visor_l = 0.8,
+    visor_th = 0.05,
+)
+
+# ----------------------------------------------------
+# Constructores
+# ----------------------------------------------------
+def rect_wire_yz(w_m, h_m, x_m):
+    # Rectángulo centrado en (x_m, 0, 0), en plano YZ
+    w = mm(w_m); h = mm(h_m); x = mm(x_m)
+    hw, hh = w/2.0, h/2.0
+    pts = [
+        App.Vector(x, -hw, -hh),
+        App.Vector(x,  hw, -hh),
+        App.Vector(x,  hw,  hh),
+        App.Vector(x, -hw,  hh),
+        App.Vector(x, -hw, -hh),
+    ]
+    return Part.makePolygon(pts)
+
+def make_tps_campana(P):
+    fw, fh = P["campana_front_w"], P["campana_front_h"]
+    bw, bh = P["campana_back_w"],  P["campana_back_h"]
+    depth  = P["campana_depth"]
+    wall_t = P["campana_wall_t"]
+    lipw   = P["lip_w"]; lipt = P["lip_t"]
+
+    # Wires frontal y trasero (plano YZ en X=0 y X=-depth)
+    wf = rect_wire_yz(fw, fh, 0.0)
+    wb = rect_wire_yz(bw, bh, -depth)
+
+    # Loft externo sólido
+    loft_ext = Part.makeLoft([wf, wb], True, False, False)
+
+    # Wires internos (contracción por espesor, con pequeño offset en X para evitar coplanaridad)
+    eps = 0.02
+    if fw - 2*wall_t <= 0 or fh - 2*wall_t <= 0 or bw - 2*wall_t <= 0 or bh - 2*wall_t <= 0:
+        # si no caben, reduce el espesor efectivo
+        wall_t = min(wall_t, min(fw, fh, bw, bh) * 0.2)
+    wfi = rect_wire_yz(max(0.1, fw - 2*wall_t), max(0.1, fh - 2*wall_t), -eps)
+    wbi = rect_wire_yz(max(0.1, bw - 2*wall_t), max(0.1, bh - 2*wall_t), -depth + eps)
+
+    loft_int = Part.makeLoft([wfi, wbi], True, False, False)
+
+    # Cascarón: externo - interno
+    shell = cut_safe(loft_ext, loft_int)
+
+    # Reborde frontal (anillo rectangular): cara exterior - cara interior, extruida en +X
+    lip_outer = Part.Face(rect_wire_yz(fw, fh, 0.0))
+    lip_inner = Part.Face(rect_wire_yz(max(0.1, fw - 2*lipw), max(0.1, fh - 2*lipw), 0.0))
+    lip_face = cut_safe(lip_outer, lip_inner)
+    lip = lip_face.extrude(App.Vector(mm(lipt), 0, 0))
+
+    # Aros rectangulares traseros (dos)
+    def ring_at(x_m):
+        outer = Part.Face(rect_wire_yz(bw, bh, x_m))
+        inner = Part.Face(rect_wire_yz(max(0.1, bw - 2*P["ring_width"]), max(0.1, bh - 2*P["ring_width"]), x_m))
+        face  = cut_safe(outer, inner)
+        return face.extrude(App.Vector(mm(P["ring_thick"]), 0, 0))
+
+    ring1 = ring_at(-P["ring_gap"])
+    ring2 = ring_at(-P["ring_gap"] - P["ring2_offset"] - P["ring_thick"])
+
+    return fuse_all([shell, lip, ring1, ring2])
+
+def make_bolts_rect_perimeter(P):
+    # Tornillos distribuidos por el perímetro rectangular frontal (X≈0)
+    fw, fh = mm(P["campana_front_w"]), mm(P["campana_front_h"])
+    n = P["bolt_count"]; r = mm(P["bolt_r"]); L = mm(P["bolt_l"])
+    half_w, half_h = fw/2.0, fh/2.0
+
+    bolts = []
+    # Distribuir proporcionalmente en los 4 lados
+    per = 2*(fw + fh)
+    step = per / n
+    dist = 0.0
+    for _ in range(n):
+        # Avanza a lo largo del perímetro
+        p = dist % per
+        if p < fw:
+            y = -half_w + p; z = half_h
+        elif p < fw + fh:
+            y = half_w; z = half_h - (p - fw)
+        elif p < 2*fw + fh:
+            y = half_w - (p - (fw + fh)); z = -half_h
+        else:
+            y = -half_w; z = -half_h + (p - (2*fw + fh))
+        # cilindro eje X
+        cyl = Part.makeCylinder(r, L, App.Vector(-mm(0.05), y, z), App.Vector(1,0,0))
+        bolts.append(cyl)
+        dist += step
+    return fuse_all(bolts)
+
+def make_edge_visors_rect(P):
+    # Viseras rectas a lo largo de los 4 bordes del rectángulo frontal
+    fw, fh = mm(P["campana_front_w"]), mm(P["campana_front_h"])
+    half_w, half_h = fw/2.0, fh/2.0
+    span = mm(P["visor_span"]); vw = mm(P["visor_w"]); vl = mm(P["visor_l"]); th = mm(P["visor_th"])
+    vis = []
+
+    # Borde superior (z=+half_h)
+    count_top = max(2, int(fw / span))
+    for i in range(count_top):
+        y = -half_w + (i + 0.5) * (fw / count_top)
+        box = Part.makeBox(th, vw, vl, App.Vector(0, y - vw/2.0, half_h - vl/2.0))
+        vis.append(box)
+    # Inferior
+    count_bot = count_top
+    for i in range(count_bot):
+        y = -half_w + (i + 0.5) * (fw / count_bot)
+        box = Part.makeBox(th, vw, vl, App.Vector(0, y - vw/2.0, -half_h - vl/2.0))
+        vis.append(box)
+    # Lateral derecho (y=+half_w)
+    count_right = max(2, int(fh / span))
+    for i in range(count_right):
+        z = -half_h + (i + 0.5) * (fh / count_right)
+        box = Part.makeBox(th, vw, vl, App.Vector(0, half_w - vw/2.0, z - vl/2.0))
+        vis.append(box)
+    # Lateral izquierdo
+    count_left = count_right
+    for i in range(count_left):
+        z = -half_h + (i + 0.5) * (fh / count_left)
+        box = Part.makeBox(th, vw, vl, App.Vector(0, -half_w - vw/2.0, z - vl/2.0))
+        vis.append(box)
+
+    return fuse_all(vis)
+
+def make_hex_ring(P):
+    # Hex regular en plano YZ, extruido en X
+    R_out = mm(P["hex_outer_R"])
+    R_in  = mm(P["hex_inner_R"])
+    t     = mm(P["hex_thick"])
+    x0    = mm(P["hex_x"])
+
+    def hex_wire(R):
+        pts = []
+        for k in range(6):
+            ang = math.radians(60*k + 30)  # flat-top
+            y = R * math.cos(ang)
+            z = R * math.sin(ang)
+            pts.append(App.Vector(x0, y, z))
+        pts.append(pts[0])
+        return Part.makePolygon(pts)
+
+    outer_w = hex_wire(R_out)
+    inner_w = hex_wire(R_in)
+    face_outer = Part.Face(outer_w)
+    face_inner = Part.Face(inner_w)
+    ring_face = cut_safe(face_outer, face_inner)
+    return ring_face.extrude(App.Vector(t, 0, 0))
+
+def make_bus(P):
+    L = mm(P["bus_len"]); W = mm(P["bus_w"]); H = mm(P["bus_h"]); x = mm(P["bus_x"])
+    bus = Part.makeBox(L, W, H, App.Vector(x - L/2.0, -W/2.0, -H/2.0))
+    try:
+        bus = bus.makeChamfer(mm(0.6), bus.Edges)
+    except Exception:
+        pass
+    return bus
+
+def make_tanks(P):
+    r = mm(P["tank_r"]); l = mm(P["tank_l"]); x = mm(P["tank_x"]); oy = mm(P["tank_offset_y"])
+    # cilindro eje X
+    left  = Part.makeCylinder(r, l, App.Vector(x - l/2.0, -oy, 0), App.Vector(1,0,0))
+    right = Part.makeCylinder(r, l, App.Vector(x - l/2.0,  oy, 0), App.Vector(1,0,0))
+    return fuse_all([left, right])
+
+def make_panels_with_grid(P, side=+1):
+    L = mm(P["panel_len"]); W = mm(P["panel_w"]); TH = mm(P["panel_th"])
+    x = mm(P["panel_x"]); gap = mm(P["panel_gap"])
+    y0 = side * (mm(P["bus_w"])/2.0 + gap)
+
+    base_th = mm(0.60)
+    plate_th = TH
+
+    base  = Part.makeBox(base_th, L, W, App.Vector(x - base_th/2.0, y0 - L/2.0, -W/2.0))
+    plate = Part.makeBox(plate_th, L, W, App.Vector(x + base_th/2.0, y0 - L/2.0, -W/2.0))
+    panel = fuse_all([base, plate])
+
+    ny, nz = max(2, P["panel_grid_ny"]), max(2, P["panel_grid_nz"])
+    gy = L / ny; gz = W / nz
+    groove = mm(P["panel_groove"])
+    groove = min(groove, plate_th - mm(0.001))  # no atravesar
+    groove_x0 = x + base_th/2.0 + (plate_th - groove)
+
+    grooves = []
+    # Ranuras Y (peines paralelos a Z)
+    cut_wY = mm(0.05)
+    for i in range(1, ny):
+        y_pos = y0 - L/2.0 + i*gy - cut_wY/2.0
+        g = Part.makeBox(groove, cut_wY, W, App.Vector(groove_x0, y_pos, -W/2.0))
+        grooves.append(g)
+    # Ranuras Z (peines paralelos a Y)
+    cut_wZ = mm(0.05)
+    for j in range(1, nz):
+        z_pos = -W/2.0 + j*gz - cut_wZ/2.0
+        g = Part.makeBox(groove, L, cut_wZ, App.Vector(groove_x0, y0 - L/2.0, z_pos))
+        grooves.append(g)
+
+    if grooves:
+        panel = cut_safe(panel, fuse_all(grooves))
+
+    return panel
+
+def make_radiators(P):
+    plates = []
+    L = mm(P["rad_len"]); W = mm(P["rad_w"]); TH = mm(P["rad_th"])
+    x = mm(P["rad_x"]); z = mm(P["rad_z"])
+    n = P["rad_count"]; fan = P["rad_fan_angle"]
+    for i in range(n):
+        angle = -fan/2.0 + (fan * (i / float(max(1, n-1))))
+        plate = Part.makeBox(TH, L, W, App.Vector(x - TH/2.0, -L/2.0, z))
+        plate = rotate(plate, App.Vector(1,0,0), angle, App.Vector(x, 0, z))
+        plates.append(plate)
+    return fuse_all(plates)
+
+def make_rcs(P, bus_shape):
+    r1 = mm(P["rcs_cone_r1"]); r2 = mm(P["rcs_cone_r2"]); h = mm(P["rcs_cone_h"])
+    bb = bus_shape.BoundBox
+    cones = []
+    for sgnY in (+1, -1):
+        for sgnZ in (+1, -1):
+            for xi in (bb.XMin + mm(2.0), bb.XMax - mm(2.0)):
+                y = sgnY * (P["bus_w"]/2.0 + P["panel_gap"]/2.0)
+                z = sgnZ * (P["bus_h"]/2.0 - 1.0)
+                cone = Part.makeCone(r1, r2, h, App.Vector(xi, mm(y), mm(z)), App.Vector(0, 1, 0))  # eje Y
+                if sgnY < 0:
+                    cone = rotate(cone, App.Vector(0,0,1), 180, App.Vector(xi, mm(y), mm(z)))
+                cones.append(cone)
+    return fuse_all(cones)
+
+def make_star_trackers(P):
+    bx, by, bz = [mm(v) for v in P["st_box"]]
+    x = mm(P["st_x"]); y = mm(P["st_y"]); z = mm(P["st_z"])
+    body1 = Part.makeBox(bx, by, bz, App.Vector(x - bx/2.0, y - by/2.0, z - bz/2.0))
+    lens1 = Part.makeCylinder(mm(P["st_lens_r"]), mm(0.4), App.Vector(x + bx/2.0, y, z), App.Vector(1,0,0))
+    body2 = Part.makeBox(bx, by, bz, App.Vector(x - bx/2.0, -y - by/2.0, -z - bz/2.0))
+    lens2 = Part.makeCylinder(mm(P["st_lens_r"]), mm(0.4), App.Vector(x + bx/2.0, -y, -z), App.Vector(1,0,0))
+    return fuse_all([body1, lens1, body2, lens2])
+
+def make_dish_and_whips(P):
+    r = mm(P["dish_r"]); h = mm(P["dish_h"]); x = mm(P["dish_x"])
+    # Plato como cono poco profundo (eje X)
+    dish = Part.makeCone(r, r*0.15, h, App.Vector(x - h, 0, 0), App.Vector(1,0,0))
+    mast = Part.makeCylinder(mm(0.18), mm(3.0), App.Vector(x + mm(0.2), 0, 0), App.Vector(1,0,0))
+    whipL = Part.makeCylinder(mm(P["whip_r"]), mm(P["whip_len"]), App.Vector(x, mm(2.0), 0), App.Vector(0,1,0))
+    whipR = Part.makeCylinder(mm(P["whip_r"]), mm(P["whip_len"]), App.Vector(x, -mm(2.0), 0), App.Vector(0,-1,0))
+    return fuse_all([dish, mast, whipL, whipR])
+
+def make_boom(P):
+    L = mm(P["boom_len"]); r = mm(P["boom_r"]); x0 = mm(P["boom_x0"])
+    tube = Part.makeCylinder(r, L, App.Vector(x0, 0, 0), App.Vector(1,0,0))
+    tube = rotate(tube, App.Vector(0,1,0), P["boom_angle"], App.Vector(x0,0,0))
+    return tube
+
+# ----------------------------------------------------
+# Ensamblado completo
+# ----------------------------------------------------
+def assemble_station(P):
+    doc = ensure_doc()
+
+    # TPS campana + detalles
+    campana = make_tps_campana(P)
+    add_obj(campana, "TPS_Campana", color=(0.20,0.20,0.22))
+
+    bolts = make_bolts_rect_perimeter(P)
+    add_obj(bolts, "TPS_Bolts", color=(0.65,0.65,0.65))
+
+    visors = make_edge_visors_rect(P)
+    add_obj(visors, "TPS_Visors", color=(0.30,0.30,0.32))
+
+    # Hex ring (opcional, detrás)
+    hexring = make_hex_ring(P)
+    add_obj(hexring, "Hex_Ring", color=(0.35,0.35,0.37))
+
+    # Bus principal y tanques
+    bus = make_bus(P)
+    add_obj(bus, "Bus_Main", color=(0.22,0.24,0.28))
+
+    tanks = make_tanks(P)
+    add_obj(tanks, "Side_Tanks", color=(0.55,0.56,0.58))
+
+    # Paneles
+    panelR = make_panels_with_grid(P, side=+1)
+    add_obj(panelR, "Solar_Right", color=(0.06,0.16,0.25))
+    panelL = make_panels_with_grid(P, side=-1)
+    add_obj(panelL, "Solar_Left", color=(0.06,0.16,0.25))
+
+    # Radiadores
+    rads = make_radiators(P)
+    add_obj(rads, "Radiators", color=(0.85,0.85,0.90))
+
+    # RCS
+    rcs = make_rcs(P, bus)
+    add_obj(rcs, "RCS_Thrusters", color=(0.45,0.45,0.48))
+
+    # Star trackers
+    st = make_star_trackers(P)
+    add_obj(st, "Star_Trackers", color=(0.70,0.70,0.75))
+
+    # Antenas
+    comms = make_dish_and_whips(P)
+    add_obj(comms, "Comms", color=(0.78,0.78,0.80))
+
+    # Boom
+    boom = make_boom(P)
+    add_obj(boom, "Instrument_Boom", color=(0.60,0.60,0.62))
+
+    doc.recompute()
+    if HAS_GUI:
+        try:
+            Gui.SendMsgToActiveView("ViewFit")
+            Gui.activeDocument().activeView().viewAxonometric()
+        except Exception:
+            pass
+
+# Ejecutar
+if __name__ == "__main__":
+    assemble_station(P)
+
