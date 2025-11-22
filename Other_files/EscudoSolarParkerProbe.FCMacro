@@ -1,0 +1,45 @@
+# -*- coding:utf-8 -*-
+import FreeCAD as App, FreeCADGui as Gui, Part
+
+doc_name = "Solar_Shield"
+doc = App.newDocument(doc_name) if App.ActiveDocument is None or App.ActiveDocument.Label != doc_name else App.ActiveDocument
+
+Y_AXIS = App.Vector(0,1,0)
+def rot_to_x(): return App.Rotation(Y_AXIS,90)
+def add_obj(s,label): o=doc.addObject("Part::Feature",label); o.Shape=s; return o
+
+# Parámetros
+shield_d = 2500.0   # diámetro mm
+face_th  = 10.0     # cara C/C mm
+foam_th  = 100.0    # núcleo foam mm
+coat_th  = 2.0      # recubrimiento cerámico mm
+sup_L    = 280.0    # soporte cónico mm
+sup_d1   = 900.0    # base soporte mm
+sup_d2   = 600.0    # punta soporte mm
+
+# Centro geométrico
+cx = (face_th*2 + foam_th + coat_th)/2.0 + sup_L
+
+# Capas coaxiales
+back_cc = Part.makeCylinder(shield_d/2.0, face_th)
+back_cc.Placement = App.Placement(App.Vector(cx - (foam_th/2 + face_th/2 + coat_th/2),0,0), rot_to_x())
+
+core = Part.makeCylinder((shield_d-10)/2.0, foam_th)
+core.Placement = App.Placement(App.Vector(cx,0,0), rot_to_x())
+
+front_cc = Part.makeCylinder(shield_d/2.0, face_th)
+front_cc.Placement = App.Placement(App.Vector(cx + (foam_th/2 + face_th/2),0,0), rot_to_x())
+
+coat = Part.makeCylinder(shield_d/2.0, coat_th)
+coat.Placement = App.Placement(App.Vector(cx + (foam_th/2 + face_th + coat_th/2),0,0), rot_to_x())
+
+# Soporte cónico
+sup = Part.makeCone(sup_d1/2.0, sup_d2/2.0, sup_L)
+sup.Placement = App.Placement(App.Vector(sup_L/2.0,0,0), rot_to_x())
+
+# Fusión en sólido único
+shield = back_cc.fuse(core).fuse(front_cc).fuse(coat).fuse(sup).removeSplitter()
+add_obj(shield,"Solar_Shield")
+
+try: Gui.ActiveDocument.ActiveView.fitAll()
+except: pass

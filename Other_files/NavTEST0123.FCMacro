@@ -1,0 +1,291 @@
+# -*- coding: utf-8 -*-
+"""
+Macro FreeCAD: Nave Espacial Mejorada
+Modelo 3D paramétrico de una nave espacial/satélite con múltiples subsistemas.
+Optimizado para impresión 3D y simulación en FreeCAD.
+
+Autor: AI Assistant
+Versión: 2.0
+Unidades: mm
+"""
+
+import FreeCAD as App
+import Part
+import Draft
+import math
+
+# Crear documento si no existe
+if not App.ActiveDocument:
+    App.newDocument("Satellite")
+    App.setActiveDocument("Satellite")
+
+# Materiales con colores
+MATERIALS = {
+    'TITANIUM': (0.7, 0.7, 0.8),
+    'STEEL': (0.6, 0.6, 0.6),
+    'ALUMINUM': (0.9, 0.9, 0.9),
+    'CARBON_FIBER': (0.2, 0.2, 0.2),
+    'ABLATIVE': (0.8, 0.4, 0.0),
+    'INSULATION': (0.8, 0.8, 0.8),
+}
+
+# Definir constantes
+P = {
+    "nose_base_d": 500.0,
+    "nose_cap_d": 300.0,
+    "nose_len": 1000.0,
+    "mid_d": 300.0,
+    "mid_len": 2000.0,
+    "rear_d": 300.0,
+    "rear_len": 1000.0,
+    "hull_fillet_r": 10.0,
+    "front_tps_r": 200.0,
+    "front_tps_t": 100.0,
+    "front_tps_gap": 50.0,
+    "nozzle_throat_d": 100.0,
+    "nozzle_l": 200.0,
+    "nozzle_h": 50.0,
+    "nozzle_fillet_r": 10.0,
+    "antenna_d": 100.0,
+    "antenna_l": 200.0,
+    "antenna_h": 50.0,
+    "antenna_fillet_r": 10.0,
+    "sensor_d": 50.0,
+    "sensor_l": 100.0,
+    "sensor_h": 20.0,
+    "sensor_fillet_r": 5.0,
+    "panel_width": 1000.0,
+    "panel_length": 500.0,
+    "panel_thickness": 10.0,
+    "panel_count": 4,
+    "panel_spacing": 200.0,
+    "antenna_spacing": 150.0,
+    "sensor_spacing": 100.0,
+    "propulsion_count": 4,
+    "propulsion_d": 200.0,
+    "propulsion_l": 300.0,
+    "landing_gear_count": 3,
+    "landing_gear_d": 50.0,
+    "landing_gear_l": 200.0,
+    "communication_d": 80.0,
+    "communication_l": 150.0,
+    "communication_h": 30.0,
+    "power_d": 120.0,
+    "power_l": 180.0,
+    "power_h": 40.0,
+    "thermal_d": 100.0,
+    "thermal_l": 160.0,
+    "thermal_h": 25.0
+}
+
+# Funciones auxiliares
+def make_cyl_x(diameter, length, cx=0.0):
+    """Crear un cilindro a lo largo del eje X."""
+    cyl = Part.makeCylinder(diameter/2.0, length)
+    cyl.Placement = App.Placement(App.Vector(cx, 0, 0), App.Rotation(App.Vector(0,1,0), 90))
+    return cyl
+
+def safe_fillet(shape, radius):
+    """Aplicar fillet de manera segura."""
+    try:
+        return shape.makeFillet(radius, shape.Edges)
+    except:
+        return shape
+
+def add_obj(shape, name, color=None):
+    """Agregar objeto al documento."""
+    obj = App.ActiveDocument.addObject("Part::Feature", name)
+    obj.Shape = shape
+    if color:
+        obj.ViewObject.ShapeColor = color
+    return obj
+
+def rot_to_x():
+    """Rotación para alinear con eje X."""
+    return App.Rotation(App.Vector(0,1,0), 90)
+
+def add_label(text, font_size, position, rotation, color):
+    """Agregar etiqueta de texto."""
+    label = Draft.make_text(text, position)
+    label.ViewObject.FontSize = font_size
+    label.Placement.Rotation = rotation
+    label.ViewObject.TextColor = color
+    return label
+
+# Crear el fuselaje hueco para volumen interno
+def make_nose_loft():
+    sections = []
+    radii = [P["nose_base_d"]/2.0, 520.0, 300.0, P["nose_cap_d"]/2.0]
+    xpos   = [0, P["nose_len"]*0.35, P["nose_len"]*0.7, P["nose_len"]]
+    for r, x in zip(radii, xpos):
+        sections.append(Part.makeCircle(r, App.Vector(x,0,0), App.Vector(1,0,0)))
+    return Part.makeLoft(sections, True)
+
+def make_inner_nose_loft():
+    sections = []
+    inner_radii = [max(0, r - 50) for r in [P["nose_base_d"]/2.0, 520.0, 300.0, P["nose_cap_d"]/2.0]]  # Grosor pared 50mm
+    xpos   = [0, P["nose_len"]*0.35, P["nose_len"]*0.7, P["nose_len"]]
+    for r, x in zip(inner_radii, xpos):
+        sections.append(Part.makeCircle(r, App.Vector(x,0,0), App.Vector(1,0,0)))
+    return Part.makeLoft(sections, True)
+
+nose_outer = make_nose_loft()
+nose_inner = make_inner_nose_loft()
+nose = nose_outer.cut(nose_inner)
+
+mid_outer = make_cyl_x(P["mid_d"], P["mid_len"], cx=P["nose_len"])
+mid_inner = make_cyl_x(P["mid_d"] - 100, P["mid_len"] + 200, cx=P["nose_len"])  # Hueco
+mid = mid_outer.cut(mid_inner)
+
+rear_outer = make_cyl_x(P["rear_d"], P["rear_len"], cx=P["nose_len"] + P["mid_len"])
+rear_inner = make_cyl_x(P["rear_d"] - 100, P["rear_len"] + 200, cx=P["nose_len"] + P["mid_len"])
+rear = rear_outer.cut(rear_inner)
+
+fuselage = safe_fillet(nose.fuse(mid).fuse(rear), P["hull_fillet_r"])
+hull_obj = add_obj(fuselage, "Hull_Hollow", color=MATERIALS['TITANIUM'])
+
+# Compartimentos internos
+cockpit = Part.makeBox(400, 300, 200)
+cockpit.Placement = App.Placement(App.Vector(100, -150, -100), App.Rotation())
+cockpit_obj = add_obj(cockpit, "Cockpit", color=MATERIALS['ALUMINUM'])
+
+reactor = make_cyl_x(200, 300, cx=P["nose_len"] + P["mid_len"]/2.0)
+reactor_obj = add_obj(reactor, "Reactor", color=MATERIALS['STEEL'])
+
+# Agregar componentes adicionales al satélite
+# Paneles solares
+panels = []
+for i in range(P["panel_count"]):
+    p = Part.makeBox(P["panel_width"], P["panel_length"], P["panel_thickness"])
+    p.Placement = App.Placement(App.Vector(P["nose_len"] + P["mid_len"] + 80.0, -P["rear_d"]/2.0 - 90.0 + i*P["panel_spacing"], 0), App.Rotation())
+    panels.append(p)
+panel_union = panels[0]
+for p in panels[1:]:
+    panel_union = panel_union.fuse(p)
+panel_obj = add_obj(panel_union, "Solar_Panel", color=(0.80, 0.80, 0.80))
+
+# Antenas
+antenna_count = 4
+antennas = []
+for i in range(antenna_count):
+    a = Part.makeBox(P["antenna_d"], P["antenna_l"], P["antenna_h"])
+    a.Placement = App.Placement(App.Vector(P["nose_len"] + P["mid_len"] + 80.0 + i*P["antenna_spacing"], -P["rear_d"]/2.0 - 90.0, 0), App.Rotation())
+    antennas.append(a)
+antenna_union = antennas[0]
+for a in antennas[1:]:
+    antenna_union = antenna_union.fuse(a)
+antenna_obj = add_obj(antenna_union, "Antenna", color=(0.80, 0.20, 0.20))
+
+# Sensores
+sensor_count = 2
+sensors = []
+for i in range(sensor_count):
+    s = Part.makeBox(P["sensor_d"], P["sensor_l"], P["sensor_h"])
+    s.Placement = App.Placement(App.Vector(P["nose_len"] + P["mid_len"] + 80.0 + i*P["sensor_spacing"], -P["rear_d"]/2.0 - 90.0, 0), App.Rotation())
+    sensors.append(s)
+sensor_union = sensors[0]
+for s in sensors[1:]:
+    sensor_union = sensor_union.fuse(s)
+sensor_obj = add_obj(sensor_union, "Sensor", color=(0.20, 0.20, 0.80))
+
+# Mejorar la forma del satélite
+# Agregar TPS frontal (escudo térmico)
+front_tps = Part.makeCone(P["front_tps_r"], P["front_tps_r"] * 0.8, P["front_tps_t"])
+front_tps.Placement = App.Placement(App.Vector(-P["front_tps_t"] - P["front_tps_gap"], 0, 0), rot_to_x())
+front_tps = safe_fillet(front_tps, 4.0)
+front_tps_obj = add_obj(front_tps, "Front_TPS", color=(0.50,0.52,0.54))
+
+# Tobera del motor (cono convergente)
+nozzle = Part.makeCone(P["nozzle_throat_d"]/2.0, P["nozzle_throat_d"]/4.0, P["nozzle_l"])
+nozzle.Placement = App.Placement(App.Vector(P["nose_len"] + P["mid_len"] + P["rear_len"] - P["nozzle_l"], 0, 0), rot_to_x())
+nozzle = safe_fillet(nozzle, P["nozzle_fillet_r"])
+nozzle_obj = add_obj(nozzle, "Nozzle", color=(0.90,0.90,0.90))
+
+# Sistemas de propulsión
+propulsions = []
+for i in range(P["propulsion_count"]):
+    prop = make_cyl_x(P["propulsion_d"], P["propulsion_l"], cx=P["nose_len"] + P["mid_len"] + P["rear_len"] - P["propulsion_l"])
+    prop.Placement = App.Placement(App.Vector(0, P["rear_d"]/2.0 + 50 + i*100, 0), App.Rotation())
+    propulsions.append(prop)
+propulsion_union = propulsions[0]
+for pr in propulsions[1:]:
+    propulsion_union = propulsion_union.fuse(pr)
+propulsion_obj = add_obj(propulsion_union, "Propulsion_System", color=(0.60, 0.60, 0.60))
+
+# Tren de aterrizaje
+landing_gears = []
+for i in range(P["landing_gear_count"]):
+    angle = i * 120  # Distribuir en 120 grados
+    x = P["nose_len"] + P["mid_len"] + P["rear_len"] - P["landing_gear_l"]/2.0
+    y = (P["rear_d"]/2.0 + 50) * math.sin(math.radians(angle))
+    z = (P["rear_d"]/2.0 + 50) * math.cos(math.radians(angle))
+    lg = make_cyl_x(P["landing_gear_d"], P["landing_gear_l"], cx=x)
+    lg.Placement = App.Placement(App.Vector(0, y, z), App.Rotation())
+    landing_gears.append(lg)
+landing_gear_union = landing_gears[0]
+for lg in landing_gears[1:]:
+    landing_gear_union = landing_gear_union.fuse(lg)
+landing_gear_obj = add_obj(landing_gear_union, "Landing_Gear", color=(0.70, 0.70, 0.70))
+
+# Subsistemas modulares
+# Comunicación
+communications = []
+for i in range(2):
+    comm = Part.makeBox(P["communication_d"], P["communication_l"], P["communication_h"])
+    comm.Placement = App.Placement(App.Vector(P["nose_len"] + P["mid_len"] + 80.0 + i*200, P["rear_d"]/2.0 + 50, 0), App.Rotation())
+    communications.append(comm)
+communication_union = communications[0]
+for c in communications[1:]:
+    communication_union = communication_union.fuse(c)
+communication_obj = add_obj(communication_union, "Communication_System", color=(0.30, 0.30, 0.80))
+
+# Energía
+powers = []
+for i in range(2):
+    pow = Part.makeBox(P["power_d"], P["power_l"], P["power_h"])
+    pow.Placement = App.Placement(App.Vector(P["nose_len"] + P["mid_len"] + 80.0 + i*200, -P["rear_d"]/2.0 - 50, 0), App.Rotation())
+    powers.append(pow)
+power_union = powers[0]
+for p in powers[1:]:
+    power_union = power_union.fuse(p)
+power_obj = add_obj(power_union, "Power_System", color=(0.80, 0.80, 0.20))
+
+# Térmico
+thermals = []
+for i in range(2):
+    therm = Part.makeBox(P["thermal_d"], P["thermal_l"], P["thermal_h"])
+    therm.Placement = App.Placement(App.Vector(P["nose_len"] + P["mid_len"] + 80.0 + i*200, 0, P["rear_d"]/2.0 + 50), App.Rotation())
+    thermals.append(therm)
+thermal_union = thermals[0]
+for t in thermals[1:]:
+    thermal_union = thermal_union.fuse(t)
+thermal_obj = add_obj(thermal_union, "Thermal_System", color=(0.80, 0.30, 0.30))
+
+# Etiqueta del satélite
+label_text = "Nave Espacial Mejorada"
+label_font_size = 20
+label_position = App.Vector(P["nose_len"] + P["mid_len"] + 80.0, -P["rear_d"]/2.0 - 90.0 + label_font_size/2.0, 0)
+label_rotation = App.Rotation()
+label_color = (0.00, 0.00, 0.00)
+label_obj = add_label(label_text, label_font_size, label_position, label_rotation, label_color)
+
+# Ensamblar todo en un objeto final
+try:
+    all_parts = [hull_obj, cockpit_obj, reactor_obj, front_tps_obj, panel_obj, antenna_obj, sensor_obj, nozzle_obj, propulsion_obj, landing_gear_obj, communication_obj, power_obj, thermal_obj]
+    final_shape = all_parts[0].Shape
+    for part in all_parts[1:]:
+        final_shape = final_shape.fuse(part.Shape)
+    final_obj = add_obj(final_shape, "Nave_Espacial_Completa", color=MATERIALS['TITANIUM'])
+    print("Nave espacial creada exitosamente.")
+except Exception as e:
+    print(f"Error al ensamblar la nave: {e}")
+
+# Recomputar documento
+App.ActiveDocument.recompute()
+
+# Mostrar en vista
+try:
+    import FreeCADGui as Gui
+    Gui.SendMsgToActiveView("ViewFit")
+except:
+    pass

@@ -1,0 +1,329 @@
+# -*- coding: utf-8 -*-
+import FreeCAD as App, FreeCADGui as Gui
+import Part, math
+
+# ------------------------------------------------------------
+# Documento
+# ------------------------------------------------------------
+DOC_NAME = "Sparrow_Tokamak_DFD"
+if App.ActiveDocument is None or App.ActiveDocument.Label != DOC_NAME:
+    App.newDocument(DOC_NAME)
+doc = App.ActiveDocument
+
+# ------------------------------------------------------------
+# Parámetros (mm, salvo densidades)
+# Inspirado en tu script DFD, adaptado a una Sparrow cápsula
+# ------------------------------------------------------------
+P = {
+    # Fuselaje cápsula (longitudes a lo Destiny 1, compacto y cilíndrico)
+    "nose_len": 350.0,    # longitud cono frontal
+    "nose_base_d": 500.0, # diámetro base nariz
+    "mid_len": 1200.0,    # cilindro central
+    "mid_d": 650.0,       # diámetro fuselaje central
+    "rear_len": 450.0,    # cono trasero
+    "rear_d": 420.0,      # diámetro cola en extremo
+    # Ventanas laterales (recortes)
+    "win_w": 420.0, "win_h": 180.0, "win_th": 12.0, "win_z": 0.0,
+    # Posición de ventanas respecto al cilindro medio
+    "win_x": 250.0,  # offset desde el inicio del cilindro medio
+    # Núcleo tipo tokamak compacto (en el centro del fuselaje)
+    "tok_R": 210.0,  # radio mayor del toro (mm)
+    "tok_r": 55.0,   # radio menor del toro (mm)
+    "tok_core_d": 160.0, "tok_core_l": 750.0,
+    "tok_seg": 12,   # segmentación estética (opcional)
+    # Reactor DFD (colocado hacia la sección trasera)
+    "reactor_d": 800.0, "reactor_l": 900.0, "reactor_cx": 1000.0,
+    "ring_h": 30.0, "ring_ro": 420.0, "ring_ri": 380.0, "ring_n": 6, "ring_pitch": 150.0,
+    "coil_rect_w": 80.0, "coil_rect_h": 80.0, "coil_R": 440.0, "coil_n": 4, "coil_span": 800.0,
+    "moderator_t": 100.0, "moderator_gap": 20.0, "moderator_over": 200.0,
+    "tungsten_post_t": 10.0,
+    "nozzle_throat_d": 300.0, "nozzle_exit_d": 900.0, "nozzle_l": 500.0,
+    "nozzle_fillet_r": 20.0,
+    # Tobera vectorial “Sparrow” (laterales)
+    "vnozz_d": 70.0, "vnozz_l": 120.0, "vnozz_span": 160.0,
+    # Raíles laterales
+    "rail_w": 40.0, "rail_h": 25.0, "rail_l": 900.0, "rail_off": 180.0,
+    # Horquilla / timones frontales
+    "fork_span": 240.0, "fork_len": 300.0, "fork_x": -400.0,
+    # Sillín / cápsula piloto
+    "seat_d": 220.0, "seat_l": 300.0, "seat_x": -150.0, "seat_z": 160.0,
+    # Reposapiés
+    "peg_d": 20.0, "peg_l": 120.0, "peg_y": 170.0, "peg_z": -150.0, "peg_x": -100.0,
+    # Depósitos laterales
+    "tank_d": 300.0, "tank_l": 700.0, "tank_cx": 500.0, "tank_cy": 300.0, "tank_cz": -120.0,
+    # Patas (tren)
+    "leg_L_fold": 400.0, "leg_foot_d": 180.0,
+    "leg_side_x1": 250.0, "leg_side_x2": 900.0, "leg_side_y": 350.0,
+    "leg_front_x": -150.0, "leg_front_y": 0.0,
+    # Alas trapezoidales compactas
+    "wing_root_w": 380.0, "wing_tip_w": 160.0, "wing_chord": 420.0, "wing_x0": 200.0,
+    # Densidades (kg/m^3)
+    "rho_hull": 2700.0,      # Al 6061
+    "rho_struct": 4430.0,    # Ti-6Al-4V
+    "rho_tokamak": 1600.0,   # Composite/aislantes
+    "rho_reactor": 8000.0,   # Aceros/alta densidad aprox
+}
+
+# ------------------------------------------------------------
+# Utilidades
+# ------------------------------------------------------------
+X_AXIS = App.Vector(1,0,0); Y_AXIS = App.Vector(0,1,0); Z_AXIS = App.Vector(0,0,1)
+def rot_to_x(): return App.Rotation(Y_AXIS,90)
+def add_obj(shape, label):
+    o = doc.addObject("Part::Feature", label); o.Shape = shape; return o
+def make_cyl_x(d, L, cx=0.0, cy=0.0, cz=0.0, label="CylX"):
+    r = d/2.0; cyl = Part.makeCylinder(r, L)
+    cyl.Placement = App.Placement(App.Vector(cx - L/2.0, cy, cz), rot_to_x())
+    return add_obj(cyl, label)
+def make_cone_x(d1, d2, L, cx=0.0, cy=0.0, cz=0.0, label="ConeX"):
+    r1 = d1/2.0; r2 = d2/2.0; con = Part.makeCone(r1, r2, L)
+    con.Placement = App.Placement(App.Vector(cx - L/2.0, cy, cz), rot_to_x())
+    return add_obj(con, label)
+def make_torus_x(R, r, cx=0.0, cy=0.0, cz=0.0, label="TorusX"):
+    tor = Part.makeTorus(R, r); tor.Placement = App.Placement(App.Vector(cx, cy, cz), rot_to_x())
+    return add_obj(tor, label)
+def make_box(w, d, h, cx=0.0, cy=0.0, cz=0.0, label="Box"):
+    b = Part.makeBox(w, d, h)
+    b.Placement = App.Placement(App.Vector(cx - w/2.0, cy - d/2.0, cz - h/2.0), App.Rotation())
+    return add_obj(b, label)
+def sweep_rect_around_X(R, rw, rh, cx, cy, cz, label="CoilSweep"):
+    c = Part.makeCircle(R, App.Vector(cx, cy, cz), X_AXIS)
+    path = Part.Wire([c])
+    p0 = App.Vector(0,-rw/2.0,-rh/2.0); p1 = App.Vector(0,rw/2.0,-rh/2.0)
+    p2 = App.Vector(0,rw/2.0,rh/2.0);  p3 = App.Vector(0,-rw/2.0,rh/2.0)
+    prof = Part.Wire([Part.makeLine(p0,p1), Part.makeLine(p1,p2), Part.makeLine(p2,p3), Part.makeLine(p3,p0)])
+    prof.Placement = App.Placement(App.Vector(cx, cy, cz), App.Rotation(X_AXIS,0))
+    solid = Part.Wire(path).makePipeShell([prof], True, True)
+    return add_obj(solid, label)
+def color(obj, rgb):
+    try: obj.ViewObject.ShapeColor = rgb
+    except: pass
+
+def vol(o): return o.Shape.Volume if hasattr(o, "Shape") else 0.0
+def mm3_to_m3(v_mm3): return v_mm3 * 1e-9
+
+# ------------------------------------------------------------
+# Ensamblaje principal
+# ------------------------------------------------------------
+# Eje X = longitudinal; origen ~ centro del cilindro medio
+
+# 1) Fuselaje cápsula sólido
+nose = make_cone_x(P["nose_base_d"], 0.0, P["nose_len"], cx = -P["mid_len"]/2.0 - P["nose_len"]/2.0, label="Nose")
+mid  = make_cyl_x(P["mid_d"], P["mid_len"], cx = 0.0, label="Mid")
+rear = make_cone_x(P["mid_d"], P["rear_d"], P["rear_len"], cx = P["mid_len"]/2.0 + P["rear_len"]/2.0, label="Rear")
+
+hull_solid_shape = nose.Shape.fuse(mid.Shape).fuse(rear.Shape)
+# Ventanas laterales (cortes)
+win_x_center = -P["mid_len"]/2.0 + P["win_x"] + P["win_w"]/2.0
+win_right = make_box(P["win_w"], P["win_th"], P["win_h"],
+                     cx=win_x_center, cy=(P["mid_d"]/2.0)-P["win_th"]/2.0, cz=P["win_z"], label="Win_Right")
+win_left  = make_box(P["win_w"], P["win_th"], P["win_h"],
+                     cx=win_x_center, cy=-(P["mid_d"]/2.0)+P["win_th"]/2.0, cz=P["win_z"], label="Win_Left")
+hull_solid_shape = hull_solid_shape.cut(win_right.Shape).cut(win_left.Shape)
+hull = add_obj(hull_solid_shape, "Hull_Solid")
+color(hull, (0.80,0.80,0.85))
+
+# 2) Núcleo tipo tokamak compacto (centrado en el cilindro medio)
+tok_torus = make_torus_x(P["tok_R"], P["tok_r"], cx=0.0, cy=0.0, cz=0.0, label="Tokamak_Torus")
+color(tok_torus, (0.55,0.05,0.07))
+tok_core = make_cyl_x(P["tok_core_d"], P["tok_core_l"], cx=0.0, label="Tokamak_Core")
+color(tok_core, (0.15,0.18,0.22))
+
+# Hardpoints (3 soportes a 120°)
+hp_list = []
+r_hp = P["tok_R"] + P["tok_r"] + 20.0
+for i in range(3):
+    ang = math.radians(i*120.0)
+    y = r_hp * math.cos(ang); z = r_hp * math.sin(ang)
+    hp = Part.makeCylinder(15.0, 80.0)
+    hp.Placement = App.Placement(App.Vector(-40.0, y, z), rot_to_x())
+    hp_list.append(hp)
+hp_shape = hp_list[0].fuse(hp_list[1]).fuse(hp_list[2])
+tok_hp = add_obj(hp_shape, "Tokamak_Hardpoints")
+color(tok_hp, (0.35,0.40,0.48))
+
+# 3) Reactor DFD (atrás)
+reactor = make_cyl_x(P["reactor_d"], P["reactor_l"], cx=P["reactor_cx"], label="DFD_ReactorCore")
+color(reactor, (0.25,0.28,0.30))
+
+# Anillos (toros finos espaciados)
+rings = []
+x0 = P["reactor_cx"] - P["reactor_l"]/2.0 + P["ring_h"]/2.0
+for i in range(P["ring_n"]):
+    x = x0 + i*P["ring_pitch"]
+    tor = Part.makeTorus((P["ring_ro"]+P["ring_ri"])/2.0, (P["ring_ro"]-P["ring_ri"])/2.0)
+    tor.Placement = App.Placement(App.Vector(x,0,0), rot_to_x())
+    rings.append(tor)
+rings_shape = rings[0]
+for r in rings[1:]:
+    rings_shape = rings_shape.fuse(r)
+rings_obj = add_obj(rings_shape, "DFD_Rings")
+color(rings_obj, (0.55,0.10,0.10))
+
+# Bobinas barridas
+coils = []
+span = P["coil_span"]
+cx0 = P["reactor_cx"] - span/2.0
+for i in range(P["coil_n"]):
+    cx = cx0 + i*(span/(max(1,(P["coil_n"]-1))))
+    coils.append(sweep_rect_around_X(P["coil_R"], P["coil_rect_w"], P["coil_rect_h"], cx, 0.0, 0.0,
+                                     label=f"DFD_Coil_{i+1}").Shape)
+coils_shape = coils[0]
+for c in coils[1:]:
+    coils_shape = coils_shape.fuse(c)
+coils_obj = add_obj(coils_shape, "DFD_Coils")
+color(coils_obj, (0.70,0.25,0.10))
+
+# Moderador/escudo tubular
+mod_inner_r = P["reactor_d"]/2.0 + P["moderator_gap"]
+mod_outer_r = mod_inner_r + P["moderator_t"]
+mod_len = P["reactor_l"] + P["moderator_over"]
+mod_cx = P["reactor_cx"]
+mod_tube = Part.makeCylinder(mod_outer_r, mod_len).cut(Part.makeCylinder(mod_inner_r, mod_len+0.2))
+mod_tube.Placement = App.Placement(App.Vector(mod_cx - mod_len/2.0, 0, 0), rot_to_x())
+mod_obj = add_obj(mod_tube, "DFD_Shield_Moderator")
+color(mod_obj, (0.35,0.35,0.40))
+
+# Aro tungsteno posterior del reactor
+tw_len = P["tungsten_post_t"]
+tw_ro = P["reactor_d"]/2.0
+tw_ri = tw_ro - 10.0
+tw_ring = Part.makeCylinder(tw_ro, tw_len).cut(Part.makeCylinder(tw_ri, tw_len+0.1))
+tw_ring.Placement = App.Placement(App.Vector(P["reactor_cx"]+P["reactor_l"]/2.0 - tw_len/2.0, 0, 0), rot_to_x())
+tw_obj = add_obj(tw_ring, "DFD_Tungsten_RearRing")
+color(tw_obj, (0.20,0.20,0.22))
+
+# Tobera magnética y truss
+noz = Part.makeCone(P["nozzle_throat_d"]/2.0, P["nozzle_exit_d"]/2.0, P["nozzle_l"])
+noz.Placement = App.Placement(App.Vector(P["reactor_cx"]+P["reactor_l"]/2.0, 0, 0), rot_to_x())
+noz_obj = add_obj(noz, "DFD_Magnetic_Nozzle")
+color(noz_obj, (0.12,0.14,0.16))
+
+# Truss simple (3 brazos)
+truss_list = []
+truss_n = 3; truss_w = 80.0; truss_R = 420.0
+x_attach = P["reactor_cx"] + P["reactor_l"]/2.0 + 50.0
+for k in range(truss_n):
+    ang = math.radians(k*(360.0/truss_n))
+    y = truss_R*math.cos(ang); z = truss_R*math.sin(ang)
+    b = Part.makeBox(300.0, truss_w, truss_w)
+    b.Placement = App.Placement(App.Vector(x_attach-150.0, y-truss_w/2.0, z-truss_w/2.0), App.Rotation())
+    truss_list.append(b)
+truss_shape = truss_list[0].fuse(truss_list[1]).fuse(truss_list[2])
+truss_obj = add_obj(truss_shape, "DFD_Nozzle_Truss")
+color(truss_obj, (0.30,0.32,0.36))
+
+# 4) Elementos Sparrow
+
+# Raíles laterales
+rail_y = P["rail_off"]
+railL = make_box(P["rail_l"], P["rail_w"], P["rail_h"], cx=0.0, cy=rail_y, cz=0.0, label="Rail_Left")
+railR = make_box(P["rail_l"], P["rail_w"], P["rail_h"], cx=0.0, cy=-rail_y, cz=0.0, label="Rail_Right")
+color(railL, (0.55,0.60,0.68)); color(railR, (0.55,0.60,0.68))
+
+# Horquilla / timones frontales
+fork_y = P["fork_span"]/2.0
+fork_bar_up = Part.makeBox(P["fork_len"], 30.0, 12.0)
+fork_bar_up.Placement = App.Placement(App.Vector(P["fork_x"]-P["fork_len"], fork_y-15.0, 160.0), App.Rotation())
+forkL = add_obj(fork_bar_up, "Fork_Up"); color(forkL, (0.10,0.10,0.10))
+fork_bar_dn = Part.makeBox(P["fork_len"], 30.0, 12.0)
+fork_bar_dn.Placement = App.Placement(App.Vector(P["fork_x"]-P["fork_len"], -fork_y-15.0, 160.0), App.Rotation())
+forkR = add_obj(fork_bar_dn, "Fork_Down"); color(forkR, (0.10,0.10,0.10))
+
+# Tobera vectorial lateral (par)
+vnz_span = P["vnozz_span"]/2.0
+vnzL = Part.makeCone(P["vnozz_d"]/2.0*0.85, P["vnozz_d"]/2.0, P["vnozz_l"])
+vnzL.Placement = App.Placement(App.Vector(P["mid_len"]/2.0 + P["rear_len"] - P["vnozz_l"],  vnz_span, 0.0), rot_to_x())
+vnzR = Part.makeCone(P["vnozz_d"]/2.0*0.85, P["vnozz_d"]/2.0, P["vnozz_l"])
+vnzR.Placement = App.Placement(App.Vector(P["mid_len"]/2.0 + P["rear_len"] - P["vnozz_l"], -vnz_span, 0.0), rot_to_x())
+nozL = add_obj(vnzL, "Vect_Nozzle_Left"); color(nozL, (0.12,0.14,0.16))
+nozR = add_obj(vnzR, "Vect_Nozzle_Right"); color(nozR, (0.12,0.14,0.16))
+
+# Sillín cápsula
+seat = Part.makeCylinder(P["seat_d"]/2.0, P["seat_l"])
+seat.Placement = App.Placement(App.Vector(P["seat_x"] - P["seat_l"]/2.0, 0.0, P["seat_z"]), rot_to_x())
+seat_obj = add_obj(seat, "Seat_Capsule"); color(seat_obj, (0.20,0.22,0.25))
+
+# Reposapiés
+pegL = Part.makeCylinder(P["peg_d"]/2.0, P["peg_l"])
+pegL.Placement = App.Placement(App.Vector(P["peg_x"] - P["peg_l"]/2.0,  P["peg_y"], P["peg_z"]), rot_to_x())
+pegR = Part.makeCylinder(P["peg_d"]/2.0, P["peg_l"])
+pegR.Placement = App.Placement(App.Vector(P["peg_x"] - P["peg_l"]/2.0, -P["peg_y"], P["peg_z"]), rot_to_x())
+pegL_obj = add_obj(pegL, "FootPeg_L"); pegR_obj = add_obj(pegR, "FootPeg_R")
+color(pegL_obj, (0.10,0.10,0.10)); color(pegR_obj, (0.10,0.10,0.10))
+
+# 5) Depósitos y tren
+tank1 = make_cyl_x(P["tank_d"], P["tank_l"], cx=P["tank_cx"], cy=P["tank_cy"], cz=P["tank_cz"], label="Tank_Right")
+tank2 = make_cyl_x(P["tank_d"], P["tank_l"], cx=P["tank_cx"], cy=-P["tank_cy"], cz=P["tank_cz"], label="Tank_Left")
+color(tank1, (0.50,0.52,0.58)); color(tank2, (0.50,0.52,0.58))
+
+def make_leg(x, y, z, L, d, label):
+    shaft = Part.makeCylinder(d/4.0, L)
+    foot  = Part.makeCylinder(d/2.0, 20.0)
+    shaft.Placement = App.Placement(App.Vector(x - L/2.0, y, z), rot_to_x())
+    foot.Placement  = App.Placement(App.Vector(x + L/2.0 - 10.0, y, z - d/4.0), App.Rotation())
+    return add_obj(shaft.fuse(foot), label)
+
+leg_r1 = make_leg(P["leg_side_x1"],  P["leg_side_y"], -P["mid_d"]/2.0 + 50.0, P["leg_L_fold"], P["leg_foot_d"], "Leg_Right_Front")
+leg_l1 = make_leg(P["leg_side_x1"], -P["leg_side_y"], -P["mid_d"]/2.0 + 50.0, P["leg_L_fold"], P["leg_foot_d"], "Leg_Left_Front")
+leg_r2 = make_leg(P["leg_side_x2"],  P["leg_side_y"], -P["mid_d"]/2.0 + 50.0, P["leg_L_fold"], P["leg_foot_d"], "Leg_Right_Rear")
+leg_l2 = make_leg(P["leg_side_x2"], -P["leg_side_y"], -P["mid_d"]/2.0 + 50.0, P["leg_L_fold"], P["leg_foot_d"], "Leg_Left_Rear")
+leg_f  = make_leg(P["leg_front_x"], P["leg_front_y"], -P["mid_d"]/2.0 + 50.0, P["leg_L_fold"], P["leg_foot_d"], "Leg_Nose")
+for lg in [leg_r1, leg_l1, leg_r2, leg_l2, leg_f]:
+    color(lg, (0.28,0.30,0.34))
+
+# 6) Alas trapezoidales
+def make_trapezoid_wing(root_w, tip_w, chord, thickness=20.0, x0=0.0, side=1, label="Wing"):
+    x_le = x0; x_te = x0 + chord; z0 = 0.0
+    p1 = App.Vector(x_le, 0, z0 + root_w/2.0)
+    p2 = App.Vector(x_te, 0, z0 + root_w/2.0)
+    p3 = App.Vector(x_te, 0, z0 + tip_w/2.0)
+    p4 = App.Vector(x_le, 0, z0 + tip_w/2.0)
+    wire = Part.makePolygon([p1,p2,p3,p4,p1]); face = Part.Face(wire)
+    solid = face.extrude(App.Vector(0, side*(root_w - tip_w), 0))
+    slab = Part.makeBox(chord, thickness, (root_w+tip_w)/2.0)
+    slab.Placement = App.Placement(App.Vector(x0, side*thickness/2.0, -(root_w+tip_w)/4.0), App.Rotation())
+    return add_obj(solid.common(slab), label)
+
+wing_r = make_trapezoid_wing(P["wing_root_w"], P["wing_tip_w"], P["wing_chord"], x0=P["wing_x0"], side= 1, label="Wing_Right")
+wing_l = make_trapezoid_wing(P["wing_root_w"], P["wing_tip_w"], P["wing_chord"], x0=P["wing_x0"], side=-1, label="Wing_Left")
+color(wing_r, (0.18,0.20,0.24)); color(wing_l, (0.18,0.20,0.24))
+
+# ------------------------------------------------------------
+# Masas y volúmenes por subsistema
+# ------------------------------------------------------------
+# Grupos lógicos
+grp_hull     = [hull]
+grp_tokamak  = [tok_torus, tok_core, tok_hp]
+grp_reactor  = [reactor, rings_obj, coils_obj, mod_obj, tw_obj, noz_obj, truss_obj]
+grp_struct   = [railL, railR, forkL, forkR, nozL, nozR, seat_obj, pegL_obj, pegR_obj, wing_r, wing_l,
+                tank1, tank2, leg_r1, leg_l1, leg_r2, leg_l2, leg_f]
+
+def sum_vol(group):
+    return sum([vol(o) for o in group])
+
+V_hull     = sum_vol(grp_hull)
+V_tokamak  = sum_vol(grp_tokamak)
+V_reactor  = sum_vol(grp_reactor)
+V_struct   = sum_vol(grp_struct)
+
+m_hull     = mm3_to_m3(V_hull)    * P["rho_hull"]
+m_tokamak  = mm3_to_m3(V_tokamak) * P["rho_tokamak"]
+m_reactor  = mm3_to_m3(V_reactor) * P["rho_reactor"]
+m_struct   = mm3_to_m3(V_struct)  * P["rho_struct"]
+m_total    = m_hull + m_tokamak + m_reactor + m_struct
+
+# Salida a consola
+App.Console.PrintMessage("=== Resumen volumétrico y de masa ===\n")
+App.Console.PrintMessage(f"Volumen casco:     {mm3_to_m3(V_hull):.6f} m^3 | Masa: {m_hull:.2f} kg\n")
+App.Console.PrintMessage(f"Volumen tokamak:   {mm3_to_m3(V_tokamak):.6f} m^3 | Masa: {m_tokamak:.2f} kg\n")
+App.Console.PrintMessage(f"Volumen reactor:   {mm3_to_m3(V_reactor):.6f} m^3 | Masa: {m_reactor:.2f} kg\n")
+App.Console.PrintMessage(f"Volumen estructura:{mm3_to_m3(V_struct):.6f} m^3 | Masa: {m_struct:.2f} kg\n")
+App.Console.PrintMessage(f"--------------------------------------------\n")
+App.Console.PrintMessage(f"Masa total:        {m_total:.2f} kg\n")
+
+doc.recompute()
+try:
+    Gui.SendMsgToActiveView("ViewFit")
+except:
+    pass

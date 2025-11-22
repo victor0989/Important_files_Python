@@ -1,0 +1,238 @@
+# ===== Utilidades básicas =====
+import FreeCAD as App, FreeCADGui as Gui
+import Part, math
+
+def ensure_doc(name="Satelite_Modular"):
+    doc = App.ActiveDocument
+    if doc is None:
+        doc = App.newDocument(name)
+    return doc
+
+def add(shape, name, color=(0.8,0.8,0.8), alpha=0.0, parent=None):
+    obj = App.ActiveDocument.addObject("Part::Feature", name)
+    obj.Shape = shape
+    obj.ViewObject.ShapeColor = color
+    obj.ViewObject.Transparency = int(alpha*100)
+    if parent: parent.addObject(obj)
+    return obj
+
+def grp(name):
+    return App.ActiveDocument.addObject("App::Part", name)
+
+def box(w,d,h, p=(0,0,0)):
+    return Part.makeBox(w,d,h, App.Vector(*p))
+
+def cyl(r,h, p=(0,0,0), d=(0,0,1)):
+    return Part.makeCylinder(r,h, App.Vector(*p), App.Vector(*d))
+
+def tube_between(p1, p2, r):
+    v1, v2 = App.Vector(*p1), App.Vector(*p2)
+    v = v2 - v1
+    L = v.Length
+    if L < 1e-6:
+        return None
+    return Part.makeCylinder(r, L, v1, v)
+
+# ===== 1) Cuerpo principal =====
+def build_main_body(cfg_bus):
+    """
+    cfg_bus: {"L":3.0,"W":1.5,"H":1.5,"wall":0.010}
+    """
+    g = grp("MainBody")
+    L, W, H, t = cfg_bus["L"], cfg_bus["W"], cfg_bus["H"], cfg_bus["wall"]
+    outer = box(L, W, H, (0,0,0))
+    inner = box(L-2*t, W-2*t, H-2*t, (t,t,t))
+    shell = outer.cut(inner)
+    add(shell, "BodyShell", (0.75,0.75,0.78), 0.0, g)
+    meta = {"L":L,"W":W,"H":H,"t":t,"bbox":((0,0,0),(L,W,H))}
+    return g, meta
+
+# ===== 2) Racks laterales + placas de unión =====
+def build_side_racks(bus_meta, cfg_racks):
+    """
+    cfg_racks: {"len":1.5,"wid":0.5,"hei":1.2,"gap":0.1,"plate_thk":0.05,"plate_w":0.4,"plates_per_rack":3}
+    """
+    g = grp("SideRacks")
+    L, W, H = bus_meta["L"], bus_meta["W"], bus_meta["H"]
+    rl, rw, rh, gap = cfg_racks["len"], cfg_racks["wid"], cfg_racks["hei"], cfg_racks["gap"]
+    plate_t, plate_w, plates_n = cfg_racks["plate_thk"], cfg_racks["plate_w"], cfg_racks["plates_per_rack"]
+
+    # racks centrados en X y Z
+    x0 = (L - rl)/2
+    z0 = (H - rh)/2
+    # rack Y- (izquierda)
+    rackL = box(rl, rw, rh, (x0, -gap - rw, z0))
+    add(rackL, "Rack_Left", (0.60,0.60,0.65), 0.0, g)
+    # rack Y+ (derecha)
+    rackR = box(rl, rw, rh, (x0, W + gap, z0))
+    add(rackR, "Rack_Right", (0.60,0.60,0.65), 0.0, g)
+
+    # placas de unión (puentes) entre cuerpo y racks en ambas caras
+    # profundidad de placa: desde pared del bus hasta rack + solape pequeño
+    plate_d = gap + 0.02
+    # posiciones a lo largo de X
+    for i in range(plates_n):
+        px = x0 + (rl - plate_w) * (i+0.5)/plates_n
+        pz = z0 + rh/2 - plate_t/2
+        # Y-: placa apuntando hacia -Y
+        add(box(plate_w, plate_d, plate_t, (px, 0 - plate_d, pz)), f"RackL_Plate_{i+1}", (0.55,0.55,0.6), 0.0, g)
+        # Y+: placa apuntando hacia +Y
+        add(box(plate_w, plate_d, plate_t, (px, W, pz)), f"RackR_Plate_{i+1}", (0.55,0.55,0.6), 0.0, g)
+
+    return g, {"racks": {"L": (x0, -gap - rw, z0), "R": (x0, W + gap, z0)},
+               "size": (rl, rw, rh), "plates": plates_n}
+
+# ===== 3) Radiadores + soportes =====
+def build_radiators(bus_meta, cfg_rad):
+    """
+    cfg_rad: {"count":2,"len":2.5,"wid":1.0,"thk":0.05,"offset":0.2,"support_len":0.3,"support_diam":0.05,"orientation":"top|side"}
+    """
+    g = grp("Radiators")
+    L, W, H = bus_meta["L"], bus_meta["W"], bus_meta["H"]
+    n, rl, rw, rt = cfg_rad["count"], cfg_rad["len"], cfg_rad["wid"], cfg_rad["thk"]
+    off, sL, sD = cfg_rad["offset"], cfg_rad["support_len"], cfg_rad["support_diam"]
+    orient = cfg_rad.get("orientation","top")
+
+    rad_positions = []
+    if orient == "top":
+        # colocar sobre +Z, separados off
+        # dos radiadores centrados; si son 4, se desplazan en X
+        rows = 1 if n <= 2 else 2
+        per_row = n if n <= 2 else n//2
+        for r in range(rows):
+            z = H + off
+            for i in range(per_row):
+                # distribuir a lo largo de X
+                span = L - rl
+                px = (span) * (i+0.5)/per_row
+                py = (W - rw)/2
+                rad = box(rl, rw, rt, (px, py, z))
+                idx = r*per_row + i + 1
+                add(rad, f"Radiator_{idx}", (0.90,0.90,0.95), 0.0, g)
+                # soportes cilíndricos (dos por radiador, hacia abajo)
+                # soporte 1
+                s1 = cyl(sD/2, sL, (px + rl*0.15, py + rw*0.2, z - sL), (0,0,1))
+                add(s1, f"Rad_{idx}_Support_A", (0.70,0.70,0.75), 0.0, g)
+                # soporte 2
+                s2 = cyl(sD/2, sL, (px + rl*0.85, py + rw*0.8, z - sL), (0,0,1))
+                add(s2, f"Rad_{idx}_Support_B", (0.70,0.70,0.75), 0.0, g)
+                rad_positions.append((px, py, z))
+    else:
+        # en cara Y+ (derecha), separados off
+        rows = 1 if n <= 2 else 2
+        per_row = n if n <= 2 else n//2
+        for r in range(rows):
+            y = W + off
+            for i in range(per_row):
+                span = L - rl
+                px = (span) * (i+0.5)/per_row
+                pz = (H - rt)/2
+                rad = box(rl, rt, rw, (px, y, pz))  # rotado (espesor en Y)
+                idx = r*per_row + i + 1
+                add(rad, f"Radiator_{idx}", (0.90,0.90,0.95), 0.0, g)
+                # soportes hacia +Y (horizontales)
+                s1 = cyl(sD/2, sL, (px + rl*0.15, W, pz + rw*0.2), (0,1,0))
+                add(s1, f"Rad_{idx}_Support_A", (0.70,0.70,0.75), 0.0, g)
+                s2 = cyl(sD/2, sL, (px + rl*0.85, W, pz + rw*0.8), (0,1,0))
+                add(s2, f"Rad_{idx}_Support_B", (0.70,0.70,0.75), 0.0, g)
+                rad_positions.append((px, y, pz))
+    return g, {"positions": rad_positions, "size": (rl, rw, rt)}
+
+# ===== 4) Módulo de refrigeración + tuberías =====
+def build_cooling_module(bus_meta, cfg_cool, radiators_info):
+    """
+    cfg_cool: {"L":0.8,"W":0.6,"H":0.6,"near":"top|side","tube_diam":0.1}
+    radiators_info: dict de build_radiators
+    """
+    g = grp("CoolingModule")
+    L, W, H = bus_meta["L"], bus_meta["W"], bus_meta["H"]
+    cl, cw, ch = cfg_cool["L"], cfg_cool["W"], cfg_cool["H"]
+    near = cfg_cool.get("near", "top")
+    tD = cfg_cool.get("tube_diam", 0.1)
+
+    if near == "top":
+        cx = L*0.1
+        cy = (W - cw)/2
+        cz = H + 0.2  # cerca de radiadores top
+    else:
+        cx = L*0.1
+        cy = W + 0.2
+        cz = (H - ch)/2
+
+    cold = box(cl, cw, ch, (cx, cy, cz))
+    add(cold, "Cooling_Unit", (0.65,0.70,0.75), 0.0, g)
+
+    # tuberías hacia cada radiador (dos líneas por radiador: supply/return)
+    for i, (rx, ry, rz) in enumerate(radiators_info["positions"]):
+        # punto de conexión del radiador (aprox centro del borde cercano al módulo)
+        r_conn = (rx + radiators_info["size"][0]*0.05, ry, rz + radiators_info["size"][2]*0.5)
+        # supply
+        sup = tube_between((cx + cl, cy + cw*0.2, cz + ch*0.5), r_conn, tD/2)
+        if sup: add(sup, f"Cool_Supply_R{i+1}", (0.2,0.6,0.9), 0.0, g)
+        # return (otro punto)
+        r_conn2 = (rx + radiators_info["size"][0]*0.95, ry, rz + radiators_info["size"][2]*0.5)
+        ret = tube_between((cx + cl, cy + cw*0.8, cz + ch*0.5), r_conn2, tD/2)
+        if ret: add(ret, f"Cool_Return_R{i+1}", (0.9,0.4,0.2), 0.0, g)
+
+    return g, {"cooling_box": (cx, cy, cz, cl, cw, ch)}
+
+# ===== 5) Blindaje externo (Whipple + balístico) =====
+def add_external_shielding(bus_meta, cfg_shield):
+    """
+    cfg_shield: {"whipple_t":0.02,"whipple_margin":0.05,"ballistic_t":0.015,"protect_racks":True}
+    Whipple en +X; balístico en Y± y sobre racks.
+    """
+    g = grp("Shielding")
+    L, W, H = bus_meta["L"], bus_meta["W"], bus_meta["H"]
+    wt = cfg_shield.get("whipple_t", 0.02)
+    margin = cfg_shield.get("whipple_margin", 0.05)
+    bt = cfg_shield.get("ballistic_t", 0.015)
+    protect_racks = cfg_shield.get("protect_racks", True)
+
+    # Panel Whipple frente +X (ligeramente separado)
+    wh_w = W - 2*margin
+    wh_h = H - 2*margin
+    wh = box(wt, wh_w, wh_h, (L + wt, margin, margin))
+    add(wh, "Whipple_Front_+X", (0.80,0.80,0.85), 0.0, g)
+
+    # Paneles balísticos laterales en Y±
+    bal_L = box(L - 2*margin, bt, H - 2*margin, (margin, -bt, margin))
+    bal_R = box(L - 2*margin, bt, H - 2*margin, (margin, W, margin))
+    add(bal_L, "Ballistic_Y-", (0.75,0.78,0.80), 0.0, g)
+    add(bal_R, "Ballistic_Y+", (0.75,0.78,0.80), 0.0, g)
+
+    # Opcional: faldas sobre racks (si los montas)
+    if protect_racks:
+        fr = box((L - 2*margin)*0.6, bt, (H - 2*margin)*0.6, (L*0.2, -bt*1.5, H*0.2))
+        add(fr, "Ballistic_Skirt_Left", (0.78,0.80,0.82), 0.0, g)
+        fr2 = box((L - 2*margin)*0.6, bt, (H - 2*margin)*0.6, (L*0.2, W + bt*0.5, H*0.2))
+        add(fr2, "Ballistic_Skirt_Right", (0.78,0.80,0.82), 0.0, g)
+
+    return g
+
+# ===== DEMO opcional (puedes comentar estas líneas si integras en tu macro) =====
+def demo_build():
+    doc = ensure_doc()
+
+    # Config con tus medidas
+    cfg_bus = {"L":3.0, "W":1.5, "H":1.5, "wall":0.010}
+    cfg_racks = {"len":1.5, "wid":0.5, "hei":1.2, "gap":0.1, "plate_thk":0.05, "plate_w":0.4, "plates_per_rack":3}
+    cfg_rad = {"count":2, "len":2.5, "wid":1.0, "thk":0.05, "offset":0.2, "support_len":0.3, "support_diam":0.05, "orientation":"top"}
+    cfg_cool = {"L":0.8, "W":0.6, "H":0.6, "near":"top", "tube_diam":0.1}
+    cfg_shield = {"whipple_t":0.02, "whipple_margin":0.05, "ballistic_t":0.015, "protect_racks":True}
+
+    g_bus, meta = build_main_body(cfg_bus)
+    g_racks, racks_meta = build_side_racks(meta, cfg_racks)
+    g_rads, rinfo = build_radiators(meta, cfg_rad)
+    g_cool, cinfo = build_cooling_module(meta, cfg_cool, rinfo)
+    g_shld = add_external_shielding(meta, cfg_shield)
+
+    App.ActiveDocument.recompute()
+    try:
+        Gui.activeView().viewAxonometric()
+        Gui.SendMsgToActiveView("ViewFit")
+    except:
+        pass
+
+# Llama a demo_build() si quieres ver todo montado al vuelo:
+demo_build()

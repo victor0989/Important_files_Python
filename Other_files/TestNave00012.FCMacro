@@ -1,0 +1,332 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+HallThrusterCADDesign - 3D Printable Version
+Parametric solid design of a Hall Effect Thruster optimized for 3D printing.
+Includes separate parts, alignment pins, tolerances, print orientations, and STL export.
+"""
+
+import FreeCAD as App, Part, Mesh, math, os
+from FreeCAD import Base
+
+# -------------------------------
+# Document and global parameters
+# -------------------------------
+doc = App.newDocument("HallThruster_3D_Printable")
+
+params = {
+    # Main geometry (scaled for desktop printing; adjust as needed)
+    'channel_outer_diameter': 100.0,   # OD of discharge channel
+    'channel_inner_diameter': 80.0,    # ID of discharge channel (flow aperture)
+    'channel_length': 50.0,
+    'channel_split_gap': 0.3,          # axial split clearance between halves
+    'wall_thickness_min': 3.0,
+
+    'anode_thickness': 8.0,
+    'cathode_diameter': 20.0,
+    'cathode_length': 25.0,
+
+    'coil_carrier_outer_diameter': 120.0,  # printable coil carrier ring OD
+    'coil_carrier_thickness': 4.0,
+    'coil_turns': 3,
+
+    'mount_diameter': 150.0,
+    'mount_thickness': 15.0,
+
+    # Assembly features
+    'alignment_pin_diam': 3.0,
+    'alignment_pin_height': 5.0,
+    'tolerance': 0.25,                 # general clearance for fits (FDM)
+
+    # Fastening and aesthetics
+    'bolt_hole_diam': 3.0,
+    'countersink_top': 5.0,
+
+    # STL export
+    'mesh_deflection': 0.1,            # tessellation
+}
+
+# -------------------------------
+# Utility: validation & colors
+# -------------------------------
+def validate(name, shape):
+    if not shape.isValid():
+        raise ValueError(f"[{name}] Shape invalid.")
+    errs = shape.check()
+    if errs:
+        # silent report; raise only if critical
+        for e in errs:
+            App.Console.PrintMessage(f"[WARN] {name}: {e}\n")
+    return True
+
+def add_feature(name, shape, placement=Base.Placement(), color=(0.8,0.8,0.8), transparency=0):
+    obj = doc.addObject("Part::Feature", name)
+    obj.Shape = shape
+    obj.Placement = placement
+    obj.ViewObject.ShapeColor = color
+    obj.ViewObject.Transparency = transparency
+    validate(name, shape)
+    return obj
+
+# -------------------------------
+# Ceramic discharge channel (split halves with keys)
+# -------------------------------
+def create_channel_halves():
+    od = params['channel_outer_diameter']
+    id_ = params['channel_inner_diameter']
+    L = params['channel_length']
+    gap = params['channel_split_gap']
+    tol = params['tolerance']
+    wt = max(params['wall_thickness_min'], (od - id_) / 2)
+
+    # Base ring as a short cylinder (length L)
+    outer = Part.makeCylinder(od/2, L)
+    inner = Part.makeCylinder(id_/2, L)
+    ring = outer.cut(inner)
+
+    # Split along XZ plane: create a thin cutting box
+    split_box = Part.makeBox(od, od, L + 1)
+    split_box.Placement = Base.Placement(Base.Vector(-od/2, -gap/2, -0.5), Base.Rotation())
+    half_A = ring.cut(split_box)
+    split_box.Placement = Base.Placement(Base.Vector(-od/2, gap/2, -0.5), Base.Rotation())
+    half_B = ring.cut(split_box)
+
+    # Add axial tongue-and-groove keys to align halves
+    key_width = 4.0
+    key_height = 2.0
+    key_length = L * 0.8
+    key_y_offset = (wt/2)
+
+    tongue = Part.makeBox(key_width, key_height, key_length)
+    groove = Part.makeBox(key_width + tol, key_height + tol, key_length)
+
+    # Place tongue on half_A interior edge
+    tongue.Placement = Base.Placement(
+        Base.Vector(id_/2 + 2.0, -key_height, (L - key_length)/2),
+        Base.Rotation()
+    )
+    half_A = half_A.fuse(tongue)
+
+    # Cut groove on half_B
+    groove.Placement = Base.Placement(
+        Base.Vector(id_/2 + 2.0, 0.0, (L - key_length)/2),
+        Base.Rotation()
+    )
+    half_B = half_B.cut(groove)
+
+    objA = add_feature("CeramicChannel_HalfA", half_A,
+                       Base.Placement(Base.Vector(0, 0, 0), Base.Rotation()),
+                       color=(0.85, 0.85, 0.95))
+    objB = add_feature("CeramicChannel_HalfB", half_B,
+                       Base.Placement(Base.Vector(0, 0, 0), Base.Rotation()),
+                       color=(0.85, 0.85, 0.95))
+    return objA, objB
+
+# -------------------------------
+# Anode ring with alignment pins and xenon inlet notch
+# -------------------------------
+def create_anode():
+    od = params['channel_outer_diameter']
+    th = params['anode_thickness']
+    pin_d = params['alignment_pin_diam']
+    pin_h = params['alignment_pin_height']
+    tol = params['tolerance']
+
+    base = Part.makeCylinder(od/2, th)
+    # Clearance holes matching channel halves (press-fit pins live on anode)
+    hole = Part.makeCylinder((pin_d/2) + tol, th)
+
+    for angle in [0, 90, 180, 270]:
+        x = (od/2 - 8.0) * math.cos(math.radians(angle))
+        y = (od/2 - 8.0) * math.sin(math.radians(angle))
+        h = hole.copy()
+        h.Placement = Base.Placement(Base.Vector(x, y, 0), Base.Rotation())
+        base = base.cut(h)
+
+    # Add pins
+    pin = Part.makeCylinder(pin_d/2, pin_h)
+    for angle in [0, 90, 180, 270]:
+        x = (od/2 - 8.0) * math.cos(math.radians(angle))
+        y = (od/2 - 8.0) * math.sin(math.radians(angle))
+        p = pin.copy()
+        p.Placement = Base.Placement(Base.Vector(x, y, th - pin_h), Base.Rotation())
+        base = base.fuse(p)
+
+    # Xenon inlet notch (side feed)
+    inlet = Part.makeBox(8.0, 8.0, th)
+    inlet.Placement = Base.Placement(Base.Vector(od/2 - 15.0, -4.0, 0), Base.Rotation())
+    base = base.cut(inlet)
+
+    obj = add_feature("Anode_Solid", base,
+                      Base.Placement(Base.Vector(0, 0, -th), Base.Rotation()),
+                      color=(0.7, 0.7, 0.75))
+    return obj
+
+# -------------------------------
+# Cathode tube with collar and alignment pins
+# -------------------------------
+def create_cathode():
+    d = params['cathode_diameter']
+    L = params['cathode_length']
+    pin_d = params['alignment_pin_diam']
+    pin_h = params['alignment_pin_height']
+
+    tube = Part.makeCylinder(d/2, L)
+    collar = Part.makeCylinder(d/2 + 3.0, 3.0)
+    collar.Placement = Base.Placement(Base.Vector(0, 0, L - 3.0), Base.Rotation())
+    tube = tube.fuse(collar)
+
+    pin = Part.makeCylinder(pin_d/2, pin_h)
+    for angle in [0, 90, 180, 270]:
+        x = (d/2 - 3.0) * math.cos(math.radians(angle))
+        y = (d/2 - 3.0) * math.sin(math.radians(angle))
+        p = pin.copy()
+        p.Placement = Base.Placement(Base.Vector(x, y, 0), Base.Rotation())
+        tube = tube.fuse(p)
+
+    obj = add_feature("Cathode_Solid", tube,
+                      Base.Placement(Base.Vector(0, 0, params['channel_length']), Base.Rotation()),
+                      color=(0.75, 0.7, 0.65))
+    return obj
+
+# -------------------------------
+# Printable coil carriers (annular rings with cable management)
+# -------------------------------
+def create_coil_carriers():
+    L = []
+    od = params['coil_carrier_outer_diameter']
+    th = params['coil_carrier_thickness']
+    turns = params['coil_turns']
+
+    for i in range(turns):
+        ring_outer = Part.makeCylinder(od/2, th)
+        ring_inner = Part.makeCylinder(od/2 - 2.5, th)
+        carrier = ring_outer.cut(ring_inner)
+
+        # Cable slots each 90°
+        slot_cyl = Part.makeCylinder(2.0, th)
+        for angle in range(0, 360, 90):
+            x = (od/2 - 6.0) * math.cos(math.radians(angle))
+            y = (od/2 - 6.0) * math.sin(math.radians(angle))
+            s = slot_cyl.copy()
+            s.Placement = Base.Placement(Base.Vector(x, y, 0), Base.Rotation())
+            carrier = carrier.cut(s)
+
+        z = (params['channel_length'] / (turns + 1)) * (i + 1) - th / 2
+        obj = add_feature(f"CoilCarrier_{i+1}", carrier,
+                          Base.Placement(Base.Vector(0, 0, z), Base.Rotation()),
+                          color=(0.65, 0.5, 0.3))
+        L.append(obj)
+    return L
+
+# -------------------------------
+# Mounting plate with bolt pattern and countersinks
+# -------------------------------
+def create_mounting_plate():
+    md = params['mount_diameter']
+    mt = params['mount_thickness']
+    pin_d = params['alignment_pin_diam']
+    tol = params['tolerance']
+    bolt_d = params['bolt_hole_diam']
+    cs_top = params['countersink_top']
+
+    plate = Part.makeCylinder(md/2, mt)
+
+    # Alignment through-holes matching anode pins
+    align_hole = Part.makeCylinder(pin_d/2 + tol, mt)
+    for angle in [0, 90, 180, 270]:
+        x = (params['channel_outer_diameter']/2 - 8.0) * math.cos(math.radians(angle))
+        y = (params['channel_outer_diameter']/2 - 8.0) * math.sin(math.radians(angle))
+        h = align_hole.copy()
+        h.Placement = Base.Placement(Base.Vector(x, y, 0), Base.Rotation())
+        plate = plate.cut(h)
+
+    # Bolt hole ring
+    mh = Part.makeCylinder(bolt_d/2, mt)
+    cs = Part.makeCone(cs_top/2, bolt_d/2, mt/2)
+    for angle in range(0, 360, 45):
+        x = (md/2 - 15.0) * math.cos(math.radians(angle))
+        y = (md/2 - 15.0) * math.sin(math.radians(angle))
+        hole = mh.copy(); hole.Placement = Base.Placement(Base.Vector(x, y, 0), Base.Rotation())
+        sink = cs.copy(); sink.Placement = Base.Placement(Base.Vector(x, y, mt/2), Base.Rotation())
+        plate = plate.cut(hole); plate = plate.cut(sink)
+
+    obj = add_feature("MountingPlate_Solid", plate,
+                      Base.Placement(Base.Vector(0, 0, -params['anode_thickness'] - mt), Base.Rotation()),
+                      color=(0.6, 0.6, 0.62))
+    return obj
+
+# -------------------------------
+# Build parts and preview assembly
+# -------------------------------
+def create_printable_parts():
+    parts = {}
+    parts['channel_A'], parts['channel_B'] = create_channel_halves()
+    parts['anode'] = create_anode()
+    parts['cathode'] = create_cathode()
+    parts['coils'] = create_coil_carriers()
+    parts['mount'] = create_mounting_plate()
+    doc.recompute()
+    return parts
+
+def assemble_preview(parts):
+    shapes = [
+        parts['channel_A'].Shape,
+        parts['channel_B'].Shape,
+        parts['anode'].Shape,
+        parts['cathode'].Shape,
+        parts['mount'].Shape
+    ] + [c.Shape for c in parts['coils']]
+    comp = Part.makeCompound(shapes)
+    obj = add_feature("HallThruster_Assembly_Preview", comp,
+                      Base.Placement(Base.Vector(0, 0, 0), Base.Rotation()),
+                      color=(0.8, 0.8, 0.85), transparency=65)
+    return obj
+
+# -------------------------------
+# STL export per part
+# -------------------------------
+def export_stl_parts(parts, path="./HallThruster_STL/"):
+    if not os.path.exists(path):
+        os.makedirs(path)
+    export_list = [
+        ('channel_A', parts['channel_A']),
+        ('channel_B', parts['channel_B']),
+        ('anode', parts['anode']),
+        ('cathode', parts['cathode']),
+        ('mount', parts['mount']),
+    ] + [(f"coil_{i+1}", c) for i, c in enumerate(parts['coils'])]
+
+    for name, obj in export_list:
+        try:
+            mesh = Mesh.Mesh(obj.Shape.tessellate(params['mesh_deflection']))
+            mesh.write(os.path.join(path, f"HallThruster_{name}.stl"))
+        except Exception as e:
+            App.Console.PrintError(f"[ERROR] Export {name}: {e}\n")
+
+# -------------------------------
+# Suggested print orientations
+# -------------------------------
+def set_print_orientations(parts):
+    # Channel halves: flat on one side, Z along length
+    parts['channel_A'].ViewObject.DisplayMode = "Flat Lines"
+    parts['channel_B'].ViewObject.DisplayMode = "Flat Lines"
+    # Anode: flat face down
+    parts['anode'].ViewObject.DisplayMode = "Flat Lines"
+    # Cathode: vertical tube to reduce seam artifacts
+    parts['cathode'].ViewObject.DisplayMode = "Flat Lines"
+    # Coils: flat ring down
+    for c in parts['coils']:
+        c.ViewObject.DisplayMode = "Flat Lines"
+    parts['mount'].ViewObject.DisplayMode = "Flat Lines"
+
+# -------------------------------
+# Main
+# -------------------------------
+if __name__ == "__main__":
+    parts = create_printable_parts()
+    assemble_preview(parts)
+    set_print_orientations(parts)
+    export_stl_parts(parts)
+    doc.recompute()
+

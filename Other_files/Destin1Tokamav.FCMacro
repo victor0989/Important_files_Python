@@ -1,0 +1,429 @@
+# -*- coding: utf-8 -*-
+# FreeCAD Macro: Direct Fusion Drive - Variante funcional "UNA" con plano maestro
+# Autor: Víctor + Copilot
+import FreeCAD as App, FreeCADGui as Gui, Part, math
+
+doc_name = "Direct_Fusion_Drive_UNA"
+if App.ActiveDocument is None or App.ActiveDocument.Label != doc_name:
+    App.newDocument(doc_name)
+doc = App.ActiveDocument
+
+# -----------------------------
+# Parámetros (mm, densidades kg/m^3)
+# -----------------------------
+P = {
+    "nose_len": 800.0, "nose_base_d": 600.0,
+    "mid_len": 1400.0, "mid_d": 900.0,
+    "rear_len": 800.0, "rear_d": 1200.0,
+    "hull_t": 10.0,
+
+    "cockpit_w": 900.0, "cockpit_h": 400.0, "cockpit_l": 600.0, "cockpit_x0": 600.0,
+    "win_w": 600.0, "win_h": 250.0, "win_th": 20.0, "win_y_off": 0.0, "win_z": 0.0,
+
+    "reactor_d": 800.0, "reactor_l": 900.0, "reactor_cx": 2600.0,
+    "ring_h": 30.0, "ring_ro": 420.0, "ring_ri": 380.0, "ring_n": 6, "ring_pitch": 150.0,
+
+    "coil_rect_w": 80.0, "coil_rect_h": 80.0, "coil_R": 440.0, "coil_n": 4, "coil_span": 800.0,
+
+    "moderator_t": 100.0, "moderator_gap": 20.0, "moderator_over": 200.0,
+    "tungsten_post_t": 10.0,
+
+    "nozzle_throat_d": 300.0, "nozzle_exit_d": 900.0, "nozzle_l": 700.0, "nozzle_cx": 2850.0,
+    "nozzle_fillet_r": 40.0,
+
+    "truss_n": 3, "truss_tube_w": 80.0, "truss_R_attach": 550.0,
+
+    "tank_d": 300.0, "tank_l": 700.0, "tank_cx": 1600.0, "tank_cy": 300.0, "tank_cz": -150.0,
+
+    "leg_L_fold": 400.0, "leg_L_ext": 600.0, "leg_foot_d": 180.0,
+    "leg_side_x1": 1050.0, "leg_side_x2": 1950.0, "leg_side_y": 600.0,
+    "leg_front_x": 400.0, "leg_front_y": 0.0, "leg_front_z": -350.0,
+
+    "wing_root_w": 600.0, "wing_tip_w": 150.0, "wing_chord": 450.0, "wing_th": 20.0,
+    "wing_x0": 1400.0, "wing_z0": 100.0, "wing_dihedral_deg": 8.0,
+
+    "fin_h": 400.0, "fin_base": 200.0, "fin_th": 18.0, "fin_x0": 2200.0,
+
+    "rad_panel_w": 800.0, "rad_panel_h": 600.0, "rad_panel_n": 4, "rad_panel_th": 12.0,
+    "rad_x0": 2000.0, "rad_span": 1000.0,
+
+    # Densidades
+    "rho_al": 2700.0, "rho_steel": 7850.0, "rho_ti": 4430.0, "rho_cfc": 1800.0
+}
+
+# Paleta (0..1)
+COL = {
+    "hull": (0.35, 0.35, 0.38),
+    "cockpit": (0.40, 0.40, 0.45),
+    "window": (0.15, 0.80, 0.95),
+    "reactor": (0.05, 0.45, 0.45),
+    "coil": (0.95, 0.25, 0.20),
+    "ring": (0.70, 0.70, 0.70),
+    "nozzle": (0.20, 0.20, 0.25),
+    "truss": (0.55, 0.55, 0.55),
+    "tank": (0.20, 0.55, 0.90),
+    "leg": (0.80, 0.65, 0.20),
+    "wing": (0.25, 0.55, 0.85),
+    "fin": (0.55, 0.35, 0.20),
+    "rad": (0.75, 0.15, 0.15),
+}
+
+X_AXIS = App.Vector(1,0,0); Y_AXIS = App.Vector(0,1,0); Z_AXIS = App.Vector(0,0,1)
+def rot_to_x(): return App.Rotation(Y_AXIS,90)
+
+def add_obj(shape, label):
+    o = doc.addObject("Part::Feature", label)
+    o.Shape = shape
+    return o
+
+def set_density(o, rho):
+    o.addProperty("App::PropertyFloat", "Density", "Material").Density = rho
+
+def set_color(o, c):
+    try: o.ViewObject.ShapeColor = c
+    except: pass
+
+def make_cyl_x(d, L, cx=0.0, cy=0.0, cz=0.0, label="CylX"):
+    cyl = Part.makeCylinder(d/2.0, L)
+    cyl.Placement = App.Placement(App.Vector(cx-L/2.0, cy, cz), rot_to_x())
+    return add_obj(cyl, label)
+
+def make_cone_x(d1, d2, L, cx=0.0, cy=0.0, cz=0.0, label="ConeX"):
+    con = Part.makeCone(d1/2.0, d2/2.0, L)
+    con.Placement = App.Placement(App.Vector(cx-L/2.0, cy, cz), rot_to_x())
+    return add_obj(con, label)
+
+def make_box(w, d, h, cx=0.0, cy=0.0, cz=0.0, label="Box"):
+    b = Part.makeBox(w, d, h)
+    b.Placement = App.Placement(App.Vector(cx-w/2.0, cy-d/2.0, cz-h/2.0), App.Rotation())
+    return add_obj(b, label)
+
+def make_hollow_from_offset(outer_shape, t, label="Shell"):
+    try:
+        inner = outer_shape.makeOffsetShape(-t, 0.05, join=2, fill=True)
+        shell = outer_shape.cut(inner)
+        return add_obj(shell, label)
+    except:
+        return add_obj(outer_shape, label+"_fallback")
+
+def fillet_between(shpA, shpB, r):
+    fused = shpA.fuse(shpB)
+    try:
+        edges = [e for e in fused.Edges if e.Length > 10]
+        return fused.makeFillet(r, edges)
+    except:
+        return fused
+
+def sweep_rect_around_X(R, rw, rh, cx, cy, cz, label="CoilSweep"):
+    circ = Part.makeCircle(R, App.Vector(cx,cy,cz), X_AXIS)
+    path = Part.Wire([circ])
+    p0 = App.Vector(0,-rw/2.0,-rh/2.0); p1 = App.Vector(0,rw/2.0,-rh/2.0)
+    p2 = App.Vector(0,rw/2.0,rh/2.0);   p3 = App.Vector(0,-rw/2.0,rh/2.0)
+    prof = Part.Wire([Part.makeLine(p0,p1), Part.makeLine(p1,p2), Part.makeLine(p2,p3), Part.makeLine(p3,p0)])
+    prof.Placement = App.Placement(App.Vector(cx,cy,cz), App.Rotation(X_AXIS,0))
+    shell = Part.Wire(path).makePipeShell([prof], True, True)
+    return add_obj(shell, label)
+
+def make_trapezoid_wing(root_w, tip_w, chord, th, x0, z0, side=1, dihedral_deg=0.0, label="Wing"):
+    # Planta trapezoidal, luego extrusión con espesor y rotación de diedro
+    x_le = x0; x_te = x0 + chord
+    z_root = z0 + side*(root_w/2.0)
+    z_tip  = z0 + side*(tip_w/2.0)
+    p1 = App.Vector(x_le, 0, z_root)
+    p2 = App.Vector(x_te, 0, z_root)
+    p3 = App.Vector(x_te, 0, z_tip)
+    p4 = App.Vector(x_le, 0, z_tip)
+    wire = Part.makePolygon([p1,p2,p3,p4,p1])
+    face = Part.Face(wire)
+    solid = face.extrude(App.Vector(0, th, 0))
+    o = add_obj(solid, label)
+    if dihedral_deg != 0.0:
+        # Rotar alrededor del borde raíz (eje X pasando por x_le..x_te a y=0,z=z_root)
+        axis = App.Vector(1,0,0)
+        o.Placement = App.Placement(App.Vector(0,0,0), App.Rotation(axis, side*dihedral_deg), App.Vector(x_le,0,z_root))
+    return o
+
+# -----------------------------
+# Contenedores
+# -----------------------------
+Ship = doc.addObject("App::Part","Ship")
+Body = doc.addObject("App::Part","Body")
+Reactor = doc.addObject("App::Part","Reactor")
+Propulsion = doc.addObject("App::Part","Propulsion")
+Aux = doc.addObject("App::Part","Aux")
+Ship.addObject(Body); Ship.addObject(Reactor); Ship.addObject(Propulsion); Ship.addObject(Aux)
+
+# -----------------------------
+# Cuerpo principal y cabina
+# -----------------------------
+nose = make_cone_x(P["nose_base_d"], 0.0, P["nose_len"], cx=P["nose_len"]/2.0, label="Nose")
+mid = make_cyl_x(P["mid_d"], P["mid_len"], cx=P["nose_len"]+P["mid_len"]/2.0, label="Mid")
+rear = make_cyl_x(P["rear_d"], P["rear_len"], cx=P["nose_len"]+P["mid_len"]+P["rear_len"]/2.0, label="Rear")
+
+fuse_fuselage = nose.Shape.fuse(mid.Shape).fuse(rear.Shape)
+hull = make_hollow_from_offset(fuse_fuselage, P["hull_t"], label="Hull_Shell")
+set_density(hull, P["rho_al"]); set_color(hull, COL["hull"]); Body.addObject(hull)
+
+# Ventanas laterales (sustracción)
+win1 = make_box(P["win_w"], P["win_th"], P["win_h"],
+                cx=P["cockpit_x0"]+P["cockpit_l"]/2.0,
+                cy=(P["mid_d"]/2.0)-P["win_th"]/2.0,
+                cz=P["win_z"], label="Win_Right")
+win2 = make_box(P["win_w"], P["win_th"], P["win_h"],
+                cx=P["cockpit_x0"]+P["cockpit_l"]/2.0,
+                cy=-(P["mid_d"]/2.0)+P["win_th"]/2.0,
+                cz=P["win_z"], label="Win_Left")
+hull.Shape = hull.Shape.cut(win1.Shape).cut(win2.Shape)
+
+cockpit_box = Part.makeBox(P["cockpit_l"], P["cockpit_w"], P["cockpit_h"])
+cockpit_box.Placement = App.Placement(App.Vector(P["cockpit_x0"], -P["cockpit_w"]/2.0, -P["cockpit_h"]/2.0), App.Rotation())
+try:
+    cockpit_f = cockpit_box.makeFillet(20.0, cockpit_box.Edges)
+except:
+    cockpit_f = cockpit_box
+cockpit = add_obj(cockpit_f, "Cockpit")
+set_density(cockpit, P["rho_al"]); set_color(cockpit, COL["cockpit"]); Body.addObject(cockpit)
+
+# -----------------------------
+# Reactor y escudo
+# -----------------------------
+reactor = make_cyl_x(P["reactor_d"], P["reactor_l"], cx=P["reactor_cx"], label="ReactorCore")
+set_density(reactor, P["rho_steel"]); set_color(reactor, COL["reactor"]); Reactor.addObject(reactor)
+
+# Anillos a lo largo del reactor
+rings = []
+x0 = P["reactor_cx"] - P["reactor_l"]/2.0 + P["ring_h"]/2.0
+for i in range(P["ring_n"]):
+    x = x0 + i*P["ring_pitch"]
+    ring = Part.makeTorus((P["ring_ro"]+P["ring_ri"])/2.0, (P["ring_ro"]-P["ring_ri"])/2.0)
+    ring.Placement = App.Placement(App.Vector(x,0,0), rot_to_x())
+    rings.append(ring)
+ring_shape = rings[0]
+for r in rings[1:]:
+    ring_shape = ring_shape.fuse(r)
+rings_obj = add_obj(ring_shape, "Reactor_Rings")
+set_density(rings_obj, P["rho_steel"]); set_color(rings_obj, COL["ring"]); Reactor.addObject(rings_obj)
+
+# Bobinas (barrido rectangular alrededor de X)
+coils = []
+span = P["coil_span"]; cx0 = P["reactor_cx"] - span/2.0
+for i in range(P["coil_n"]):
+    cx = cx0 + i*(span/(max(1,(P["coil_n"]-1))))
+    coil = sweep_rect_around_X(P["coil_R"], P["coil_rect_w"], P["coil_rect_h"], cx, 0.0, 0.0, label=f"Coil_{i+1}")
+    set_density(coil, P["rho_cfc"]); set_color(coil, COL["coil"]); Reactor.addObject(coil)
+    coils.append(coil.Shape)
+coils_shape = coils[0]
+for c in coils[1:]:
+    coils_shape = coils_shape.fuse(c)
+coils_obj = add_obj(coils_shape, "Reactor_Coils_Fused")
+set_density(coils_obj, P["rho_cfc"]); set_color(coils_obj, COL["coil"]); Reactor.addObject(coils_obj)
+
+# Moderador/escudo tubular
+mod_inner_r = P["reactor_d"]/2.0 + P["moderator_gap"]
+mod_outer_r = mod_inner_r + P["moderator_t"]
+mod_len = P["reactor_l"] + P["moderator_over"]
+mod_cx = P["reactor_cx"]
+mod_outer = Part.makeCylinder(mod_outer_r, mod_len)
+mod_inner = Part.makeCylinder(mod_inner_r, mod_len+0.2)
+mod_tube = mod_outer.cut(mod_inner)
+mod_tube.Placement = App.Placement(App.Vector(mod_cx - mod_len/2.0, 0, 0), rot_to_x())
+mod_obj = add_obj(mod_tube, "Shield_Moderator")
+set_density(mod_obj, P["rho_steel"]); set_color(mod_obj, COL["reactor"]); Reactor.addObject(mod_obj)
+
+# Aro de tungsteno posterior
+tw_ro = P["reactor_d"]/2.0
+tw_ri = tw_ro - P["tungsten_post_t"]
+tw_len = 12.0
+tw_tube = Part.makeCylinder(tw_ro, tw_len)
+tw_hole = Part.makeCylinder(tw_ri, tw_len+0.1)
+tw_ring = tw_tube.cut(tw_hole)
+tw_ring.Placement = App.Placement(App.Vector(P["reactor_cx"]+P["reactor_l"]/2.0 - tw_len/2.0, 0, 0), rot_to_x())
+tw_obj = add_obj(tw_ring, "Tungsten_Ring")
+set_density(tw_obj, P["rho_ti"]); set_color(tw_obj, COL["ring"]); Reactor.addObject(tw_obj)
+
+# -----------------------------
+# Propulsión
+# -----------------------------
+noz_shape = Part.makeCone(P["nozzle_throat_d"]/2.0, P["nozzle_exit_d"]/2.0, P["nozzle_l"])
+noz_shape.Placement = App.Placement(App.Vector(P["nozzle_cx"]-P["nozzle_l"]/2.0,0,0), rot_to_x())
+try:
+    filleted = fillet_between(rear.Shape, noz_shape, P["nozzle_fillet_r"])
+    nozzle_mount = add_obj(filleted, "Nozzle_Mount_Fillet")
+    set_density(nozzle_mount, P["rho_cfc"]); set_color(nozzle_mount, COL["nozzle"]); Propulsion.addObject(nozzle_mount)
+except:
+    noz_obj = add_obj(noz_shape, "Magnetic_Nozzle")
+    set_density(noz_obj, P["rho_cfc"]); set_color(noz_obj, COL["nozzle"]); Propulsion.addObject(noz_obj)
+
+# Riostras de tobera
+truss_list = []
+for k in range(P["truss_n"]):
+    ang = k*(360.0/P["truss_n"])
+    x_attach = P["nose_len"]+P["mid_len"]+P["rear_len"]-50.0
+    y = P["truss_R_attach"]*math.cos(math.radians(ang))
+    z = P["truss_R_attach"]*math.sin(math.radians(ang))
+    L = 300.0
+    beam = Part.makeBox(L, P["truss_tube_w"], P["truss_tube_w"])
+    beam.Placement = App.Placement(App.Vector(x_attach-L/2.0, y-P["truss_tube_w"]/2.0, z-P["truss_tube_w"]/2.0), App.Rotation())
+    truss_list.append(beam)
+truss_shape = truss_list[0]
+for t in truss_list[1:]:
+    truss_shape = truss_shape.fuse(t)
+truss_obj = add_obj(truss_shape, "Nozzle_Truss")
+set_density(truss_obj, P["rho_steel"]); set_color(truss_obj, COL["truss"]); Propulsion.addObject(truss_obj)
+
+# Aro en salida tobera
+tn_ro = P["nozzle_exit_d"]/2.0 + 40.0
+tn_ri = tn_ro - 10.0
+tn_len = 20.0
+tn_tube = Part.makeCylinder(tn_ro, tn_len)
+tn_hole = Part.makeCylinder(tn_ri, tn_len+0.1)
+tn_ring = tn_tube.cut(tn_hole)
+tn_ring.Placement = App.Placement(App.Vector(P["nozzle_cx"]+P["nozzle_l"]/2.0 - tn_len/2.0,0,0), rot_to_x())
+tn_obj = add_obj(tn_ring, "Nozzle_Rim")
+set_density(tn_obj, P["rho_ti"]); set_color(tn_obj, COL["ring"]); Propulsion.addObject(tn_obj)
+
+# -----------------------------
+# Auxiliares: tanques, patas, alas, aletas, radiadores
+# -----------------------------
+tank1 = make_cyl_x(P["tank_d"], P["tank_l"], cx=P["tank_cx"], cy=P["tank_cy"], cz=P["tank_cz"], label="Tank_Right")
+tank2 = make_cyl_x(P["tank_d"], P["tank_l"], cx=P["tank_cx"], cy=-P["tank_cy"], cz=P["tank_cz"], label="Tank_Left")
+for tnk in (tank1, tank2):
+    set_density(tnk, P["rho_al"]); set_color(tnk, COL["tank"]); Aux.addObject(tnk)
+
+def make_leg(x, y, z, L, d, label):
+    shaft = Part.makeCylinder(d/4.0, L)
+    foot = Part.makeCylinder(d/2.0, 20.0)
+    shaft.Placement = App.Placement(App.Vector(x-L/2.0, y, z), rot_to_x())
+    foot.Placement = App.Placement(App.Vector(x+L/2.0-10.0, y, z-d/4.0), App.Rotation())
+    return add_obj(shaft.fuse(foot), label)
+
+legs = [
+    make_leg(P["leg_side_x1"], P["leg_side_y"],  P["leg_front_z"], P["leg_L_fold"], P["leg_foot_d"], "Leg_RF"),
+    make_leg(P["leg_side_x1"],-P["leg_side_y"], P["leg_front_z"], P["leg_L_fold"], P["leg_foot_d"], "Leg_LF"),
+    make_leg(P["leg_side_x2"], P["leg_side_y"],  P["leg_front_z"], P["leg_L_fold"], P["leg_foot_d"], "Leg_RR"),
+    make_leg(P["leg_side_x2"],-P["leg_side_y"], P["leg_front_z"], P["leg_L_fold"], P["leg_foot_d"], "Leg_LR"),
+    make_leg(P["leg_front_x"], P["leg_front_y"], P["leg_front_z"], P["leg_L_fold"], P["leg_foot_d"], "Leg_Nose"),
+]
+for lg in legs:
+    set_density(lg, P["rho_ti"]); set_color(lg, COL["leg"]); Aux.addObject(lg)
+
+# Alas L/R
+wing_L = make_trapezoid_wing(P["wing_root_w"], P["wing_tip_w"], P["wing_chord"], P["wing_th"],
+                             P["wing_x0"], P["wing_z0"], side= 1, dihedral_deg=P["wing_dihedral_deg"], label="Wing_L")
+wing_R = make_trapezoid_wing(P["wing_root_w"], P["wing_tip_w"], P["wing_chord"], P["wing_th"],
+                             P["wing_x0"], P["wing_z0"], side=-1, dihedral_deg=P["wing_dihedral_deg"], label="Wing_R")
+for wg in (wing_L, wing_R):
+    set_density(wg, P["rho_al"]); set_color(wg, COL["wing"]); Aux.addObject(wg)
+
+# Aletas verticales (derivas) superior e inferior
+def make_fin(x0, base, h, th, up=True, label="Fin"):
+    # Triángulo isósceles extruido
+    s = 1 if up else -1
+    p1 = App.Vector(x0, 0, 0)
+    p2 = App.Vector(x0 + base, 0, 0)
+    p3 = App.Vector(x0 + base*0.15, 0, s*h)
+    wire = Part.makePolygon([p1,p2,p3,p1])
+    face = Part.Face(wire)
+    solid = face.extrude(App.Vector(0, th, 0))
+    return add_obj(solid, label)
+
+fin_up = make_fin(P["fin_x0"], P["fin_base"], P["fin_h"], P["fin_th"], up=True, label="Fin_Top")
+fin_dn = make_fin(P["fin_x0"]+180.0, P["fin_base"]*0.7, P["fin_h"]*0.6, P["fin_th"], up=False, label="Fin_Bottom")
+for fn in (fin_up, fin_dn):
+    set_density(fn, P["rho_al"]); set_color(fn, COL["fin"]); Aux.addObject(fn)
+
+# Radiadores en peine (L/R)
+rads = []
+for i in range(P["rad_panel_n"]):
+    z = -P["rad_span"]/2.0 + i*(P["rad_span"]/(P["rad_panel_n"]-1))
+    bL = make_box(P["rad_panel_w"], P["rad_panel_th"], P["rad_panel_h"],
+                  cx=P["rad_x0"], cy= P["mid_d"]/2.0 + 50.0, cz=z, label=f"Rad_L_{i+1}")
+    bR = make_box(P["rad_panel_w"], P["rad_panel_th"], P["rad_panel_h"],
+                  cx=P["rad_x0"], cy=-P["mid_d"]/2.0 - 50.0, cz=z, label=f"Rad_R_{i+1}")
+    for b in (bL, bR):
+        set_density(b, P["rho_cfc"]); set_color(b, COL["rad"]); Aux.addObject(b)
+        rads.append(b)
+
+# -----------------------------
+# Masas, volúmenes y atributos
+# -----------------------------
+def mm3_to_m3(v): return v*1e-9
+
+doc.recompute()
+
+total_mass = 0.0; total_vol = 0.0
+for obj in Ship.OutListRecursive:
+    if hasattr(obj, "Shape") and obj.TypeId == "Part::Feature":
+        vol_m3 = mm3_to_m3(obj.Shape.Volume)
+        rho = getattr(obj, "Density", 0.0)
+        mass = vol_m3 * rho
+        obj.addProperty("App::PropertyFloat","Volume_m3","Physical").Volume_m3 = vol_m3
+        obj.addProperty("App::PropertyFloat","Mass_kg","Physical").Mass_kg = mass
+        total_mass += mass; total_vol += vol_m3
+
+Ship.addProperty("App::PropertyFloat","Total_Volume_m3","Physical").Total_Volume_m3 = total_vol
+Ship.addProperty("App::PropertyFloat","Total_Mass_kg","Physical").Total_Mass_kg = total_mass
+
+print("=== Mass Summary (UNA) ===")
+print(f"TOTAL MASS: {total_mass:.2f} kg | TOTAL VOLUME: {total_vol:.4f} m^3")
+
+# -----------------------------
+# Plano TechDraw: 3 vistas y anotaciones
+# -----------------------------
+try:
+    page = doc.addObject('TechDraw::DrawPage','Page_UNA')
+    template = doc.addObject('TechDraw::DrawSVGTemplate','Template')
+    # Plantilla básica interna
+    template.Template = App.getResourceDir() + 'Mod/TechDraw/Templates/A3_Landscape.svg'
+    page.Template = template
+
+    # Vista de conjunto
+    view = doc.addObject('TechDraw::DrawViewPart','View_Iso')
+    view.Source = [Ship]
+    page.addView(view)
+    view.Direction = (1,-1,0.5)
+    view.Scale = 0.12
+    view.X = 140; view.Y = 120
+
+    # Frontal, superior, lateral
+    v_front = doc.addObject('TechDraw::DrawViewPart','View_Front'); v_front.Source=[Ship]; page.addView(v_front)
+    v_front.Direction=(1,0,0); v_front.Scale=0.10; v_front.X=80; v_front.Y=180
+
+    v_top = doc.addObject('TechDraw::DrawViewPart','View_Top'); v_top.Source=[Ship]; page.addView(v_top)
+    v_top.Direction=(0,0,1); v_top.Scale=0.10; v_top.X=210; v_top.Y=180
+
+    v_side = doc.addObject('TechDraw::DrawViewPart','View_Side'); v_side.Source=[Ship]; page.addView(v_side)
+    v_side.Direction=(0,1,0); v_side.Scale=0.10; v_side.X=340; v_side.Y=180
+
+    # Anotaciones
+    note = doc.addObject('TechDraw::DrawViewAnnotation','Note')
+    note.Text = [f"Direct Fusion Drive - Variant UNA",
+                 f"Total mass: {total_mass:.1f} kg",
+                 f"Envelope: L={P['nose_len']+P['mid_len']+P['rear_len']:.0f} mm, Dmax={P['rear_d']:.0f} mm"]
+    page.addView(note); note.X=70; note.Y=40
+
+    # Cotas clave (ejemplo entre extremos longitudinales)
+    # Buscamos bounding box del Ship para dimensionar largo y diámetro
+    bb = Ship.Shape.BoundBox
+    # Largo
+    dimL = doc.addObject('TechDraw::DrawViewDimension','Dim_Length')
+    dimL.References2D = [(v_side, 'XMinYMid'), (v_side, 'XMaxYMid')]
+    page.addView(dimL); dimL.X = 340; dimL.Y = 240
+    # Diámetro trasero
+    dimD = doc.addObject('TechDraw::DrawViewDimension','Dim_DiameterRear')
+    dimD.References2D = [(v_front, 'XMidYMin'), (v_front, 'XMidYMax')]
+    page.addView(dimD); dimD.X = 80; dimD.Y = 240
+
+    # Etiquetas de módulos
+    for v, txt, x, y in [(v_top,"Reactor",200,120),(v_top,"Nozzle",300,120),(v_top,"Radiators",220,95),
+                         (v_top,"Wings",180,105),(v_top,"Tanks",200,135)]:
+        ann = doc.addObject('TechDraw::DrawViewAnnotation', f'Lbl_{txt}')
+        ann.Text = [txt]; page.addView(ann); ann.X = x; ann.Y = y
+
+    doc.recompute()
+except Exception as e:
+    print("TechDraw skipped:", e)
+
+# Vista
+Gui.SendMsgToActiveView("ViewFit")
+Gui.activeDocument().activeView().viewAxonometric()

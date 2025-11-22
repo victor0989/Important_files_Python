@@ -1,0 +1,129 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+FreeCAD Macro: NaveEspacialDos.py
+Creates a coherent spaceship model with solar proximity shielding,
+ultra-powerful thermal shielding, and various modules.
+"""
+
+import FreeCAD
+import Part
+from FreeCAD import Base
+import math
+
+# Ensure we have an active document
+if not FreeCAD.ActiveDocument:
+    FreeCAD.newDocument("NaveEspacial")
+
+doc = FreeCAD.ActiveDocument
+
+# Dimensions (in mm, scalable) - Scaled up for more power
+hull_length = 7500
+hull_radius = 1500
+nose_length = 2250
+shield_thickness = 75
+thermal_shield_thickness = 150
+
+# Main Hull: Cylindrical body
+hull = Part.makeCylinder(hull_radius, hull_length)
+
+# Nose Cone: Conical front
+nose = Part.makeCone(hull_radius, 0, nose_length)
+nose.translate(Base.Vector(0, 0, hull_length))
+
+# Combine hull and nose
+main_body = hull.fuse(nose)
+
+# Solar Proximity Shielding: Outer radiation shield (spherical layers)
+shield_outer = Part.makeSphere(hull_radius + shield_thickness)
+shield_inner = Part.makeSphere(hull_radius)
+solar_shield = shield_outer.cut(shield_inner)
+solar_shield.translate(Base.Vector(0, 0, hull_length / 2))
+
+# Ultra-Powerful Thermal Shielding: Multi-layer thermal protection (enhanced to 10 layers)
+thermal_layers = []
+for i in range(10):
+    layer = Part.makeCylinder(hull_radius + shield_thickness + thermal_shield_thickness * (i+1),
+                              hull_length + nose_length)
+    thermal_layers.append(layer)
+
+thermal_shield = thermal_layers[0]
+for layer in thermal_layers[1:]:
+    thermal_shield = thermal_shield.fuse(layer)
+
+# Internal Radiation Shielding: Additional layer for radiation resistance
+radiation_shield = Part.makeCylinder(hull_radius - 100, hull_length + nose_length)
+
+# Modules: Propulsion, Habitation, Command
+# Propulsion Module: Multiple rear thrusters for more power
+thruster_radius = 250
+thruster_length = 1000
+thrusters = []
+for i in range(4):
+    thruster = Part.makeCylinder(thruster_radius, thruster_length)
+    angle = i * 90
+    thruster.translate(Base.Vector(hull_radius * 0.7 * math.cos(math.radians(angle)), hull_radius * 0.7 * math.sin(math.radians(angle)), -thruster_length))
+    thrusters.append(thruster)
+
+# Habitation Module: Mid-section extension
+habitation_radius = hull_radius
+habitation_length = 3000  # Scaled up
+habitation = Part.makeCylinder(habitation_radius, habitation_length)
+habitation.translate(Base.Vector(0, 0, hull_length / 2 - habitation_length / 2))
+
+# Command Module: Forward dome
+command = Part.makeSphere(hull_radius * 0.8)
+command.translate(Base.Vector(0, 0, hull_length + nose_length * 0.5))
+
+# Additional Functional Modules
+# Solar Panels: For power generation
+solar_panel_thickness = 50
+solar_panel_width = 1500
+solar_panel_length = 4000
+panels = []
+for i in range(4):
+    panel = Part.makeBox(solar_panel_thickness, solar_panel_width, solar_panel_length)
+    angle = i * 90
+    panel.rotate(Base.Vector(0,0,0), Base.Vector(0,0,1), angle)
+    panel.translate(Base.Vector((hull_radius + shield_thickness + thermal_shield_thickness*10 + 300) * math.cos(math.radians(angle)), (hull_radius + shield_thickness + thermal_shield_thickness*10 + 300) * math.sin(math.radians(angle)), hull_length / 2 - solar_panel_length / 2))
+    panels.append(panel)
+
+# Antennas: For communication
+antenna_radius = 40
+antenna_height = 1000
+antennas = []
+for i in range(4):
+    antenna = Part.makeCylinder(antenna_radius, antenna_height)
+    angle = i * 90 + 45
+    antenna.translate(Base.Vector(hull_radius * 0.6 * math.cos(math.radians(angle)), hull_radius * 0.6 * math.sin(math.radians(angle)), hull_length + nose_length + hull_radius * 0.8 + antenna_height / 2))
+    antennas.append(antenna)
+
+# Landing Gear: For planetary landing
+leg_radius = 80
+leg_height = 1500
+legs = []
+for i in range(4):
+    leg = Part.makeCylinder(leg_radius, leg_height)
+    angle = i * 90
+    leg.translate(Base.Vector(hull_radius * 0.8 * math.cos(math.radians(angle)), hull_radius * 0.8 * math.sin(math.radians(angle)), -leg_height))
+    legs.append(leg)
+
+# Assemble the spaceship
+spaceship = main_body.fuse(solar_shield).fuse(thermal_shield).fuse(radiation_shield).fuse(habitation).fuse(command)
+for thruster in thrusters:
+    spaceship = spaceship.fuse(thruster)
+for panel in panels:
+    spaceship = spaceship.fuse(panel)
+for antenna in antennas:
+    spaceship = spaceship.fuse(antenna)
+for leg in legs:
+    spaceship = spaceship.fuse(leg)
+
+# Create the part in FreeCAD
+part = doc.addObject("Part::Feature", "NaveEspacial")
+part.Shape = spaceship
+
+# Recompute the document
+doc.recompute()
+
+print("Nave Espacial created successfully!")

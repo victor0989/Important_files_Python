@@ -1,0 +1,291 @@
+# -*- coding: utf-8 -*-
+import FreeCAD as App, Part, MeshPart, math
+from FreeCAD import Vector
+
+# -------- Documento --------
+DOC_NAME = "Satellite_Param"
+def new_doc(name):
+    doc = App.newDocument(name) if App.ActiveDocument is None else App.ActiveDocument
+    if doc.Name != name: doc = App.newDocument(name)
+    return doc
+doc = new_doc(DOC_NAME)
+
+# -------- Propiedades --------
+def tag_material(obj, material="Al6061", density=2700.0, alpha=0.2, epsilon=0.8, t_nom=0.002):
+    for prop, ptype, group, desc in [
+        ("Material","App::PropertyString","FEM","Material tag"),
+        ("Density","App::PropertyFloat","FEM","Density kg/m^3"),
+        ("Alpha","App::PropertyFloat","Thermal","Solar absorptivity"),
+        ("Epsilon","App::PropertyFloat","Thermal","Emissivity"),
+        ("t_nom","App::PropertyFloat","FEM","Nominal shell thickness")
+    ]:
+        if not hasattr(obj, prop): obj.addProperty(ptype, prop, group, desc)
+    obj.Material, obj.Density, obj.Alpha, obj.Epsilon, obj.t_nom = material,density,alpha,epsilon,t_nom
+
+def color(obj, rgb=(0.8,0.8,0.8)):
+    try: obj.ViewObject.ShapeColor = rgb
+    except Exception: pass
+
+# -------- Primitivas --------
+def add_shape(name, shape, base=Vector(0,0,0)):
+    o = doc.addObject("Part::Feature", name); o.Shape = shape; o.Placement.Base = base; return o
+
+def make_cylinder(name,R,L,base=Vector(0,0,0),axis=Vector(1,0,0)):
+    shape = Part.makeCylinder(R,L,Vector(0,0,0),axis); return add_shape(name, shape, base)
+
+def make_cone_truncated(name,R1,R2,L,base=Vector(0,0,0),axis=Vector(1,0,0)):
+    shape=Part.makeCone(R1,R2,L,Vector(0,0,0),axis); return add_shape(name, shape, base)
+
+def make_box(name,X,Y,Z,base=Vector(0,0,0)):
+    shape=Part.makeBox(X,Y,Z,Vector(0,0,0)); return add_shape(name, shape, base)
+
+def make_sphere(name,R,center=Vector(0,0,0)):
+    shape=Part.makeSphere(R,center); return add_shape(name, shape, center)
+
+def make_annular_flange(name,R_inner,R_outer,t,base=Vector(0,0,0)):
+    ring=Part.makeCylinder(R_outer,t,Vector(0,0,0),Vector(1,0,0)).cut(
+        Part.makeCylinder(max(R_inner,0.0),t+1e-6,Vector(0,0,0),Vector(1,0,0))
+    )
+    return add_shape(name, ring, base)
+
+def polar_bolt_circle(name_prefix,N,R_pcd,L,d,base=Vector(0,0,0)):
+    bolts=[]
+    for i in range(N):
+        theta=2*math.pi*i/float(N); y=R_pcd*math.cos(theta); z=R_pcd*math.sin(theta)
+        bolt=Part.makeCylinder(d/2.0,L,Vector(0,0,0),Vector(1,0,0))
+        bolt_obj=add_shape(f"{name_prefix}_{i+1:02d}", bolt, base.add(Vector(0,y,z)))
+        bolts.append(bolt_obj)
+    return bolts
+
+def make_tube(name,R_outer,t,L,base=Vector(0,0,0)):
+    tube=Part.makeCylinder(R_outer,L,Vector(0,0,0),Vector(1,0,0)).cut(
+        Part.makeCylinder(max(R_outer-t,0.0),L+1e-6,Vector(0,0,0),Vector(1,0,0))
+    )
+    return add_shape(name, tube, base)
+
+def make_paraboloid_dish(name,D,p,t=0.003,base=Vector(0,0,0)):
+    R=D/2.0; f=(D*D)/(16.0*p)
+    N=42; pts=[Vector(0, R*i/float(N), (R*i/float(N))**2/(4.0*f)) for i in range(N+1)]
+    spline=Part.BSplineCurve(); spline.interpolate(pts); edge=spline.toShape()
+    face_outer=Part.Wire([edge]).revolve(Vector(0,0,0),Vector(1,0,0),360)
+    pts_in=[Vector(0, R*i/float(N), max((R*i/float(N))**2/(4.0*f)-t,0.0)) for i in range(N+1)]
+    spline_in=Part.BSplineCurve(); spline_in.interpolate(pts_in); edge_in=spline_in.toShape()
+    face_inner=Part.Wire([edge_in]).revolve(Vector(0,0,0),Vector(1,0,0),360)
+    dish=face_outer.cut(face_inner)
+    return add_shape(name, dish, base)
+
+# -------- Truss --------
+def make_truss_bus(name,L_tr=2.2,W_tr=1.2,H_tr=1.0,b=0.08,h=0.08,d_cordon=0.06,base=Vector(0,0,0)):
+    group=doc.addObject("App::DocumentObjectGroup",name)
+    offs=[Vector(0,+W_tr/2.0,+H_tr/2.0),Vector(0,+W_tr/2.0,-H_tr/2.0),Vector(0,-W_tr/2.0,+H_tr/2.0),Vector(0,-W_tr/2.0,-H_tr/2.0)]
+    for i,o in enumerate(offs):
+        tube=make_tube(f"{name}_Chord_{i+1}",d_cordon/2.0,t=d_cordon/10.0,L=L_tr,base=base.add(o))
+        color(tube,(0.2,0.2,0.25)); tag_material(tube,"Al6061",2700,0.2,0.1,0.003); group.addObject(tube)
+    nframes=int(L_tr/0.55)+1
+    for k in range(nframes):
+        xk=base.x+k*(L_tr/(nframes-1 if nframes>1 else 1))
+        beam_top=make_box(f"{name}_FrameTop_{k}",b,W_tr,b,base=Vector(xk,-W_tr/2.0,H_tr/2.0-b/2.0))
+        beam_bot=make_box(f"{name}_FrameBot_{k}",b,W_tr,b,base=Vector(xk,-W_tr/2.0,-H_tr/2.0-b/2.0))
+        beam_l=make_box(f"{name}_FrameLeft_{k}",b,b,H_tr,base=Vector(xk,+W_tr/2.0-b/2.0,-H_tr/2.0))
+        beam_r=make_box(f"{name}_FrameRight_{k}",b,b,H_tr,base=Vector(xk,-W_tr/2.0-b/2.0,-H_tr/2.0))
+        for be in [beam_top,beam_bot,beam_l,beam_r]:
+            color(be,(0.35,0.35,0.4)); tag_material(be,"CFRP",1600,0.2,0.1,0.003); group.addObject(be)
+    bay=0.55; ndiag=int(L_tr/bay)
+    for j in range(ndiag):
+        x0=base.x+j*bay
+        diag1=Part.makeBox(b,bay,b,Vector(x0,+W_tr/2.0-b/2.0,-H_tr/2.0-b/2.0))
+        d1_obj=doc.addObject("Part::Feature",f"{name}_Diag_{j}"); d1_obj.Shape=diag1
+        color(d1_obj,(0.4,0.4,0.45)); tag_material(d1_obj,"CFRP",1600,0.2,0.1,0.003); group.addObject(d1_obj)
+    return group
+
+# -------- Parámetros geométricos --------
+P={
+   "A_L_tr":2.2,"A_b":0.08,"A_h":0.08,"A_W_tr":1.2,"A_H_tr":1.0,"A_cordon":0.06,"A_Box":(1.2,1.0,0.8),
+   "A_Tank":(0.45,0.9),"A_Bolts":(48,1.6,0.014),
+   "B_L":7.0,"B_W":2.0,"B_t":0.02,"B_Mast":(0.15,0.25,1.2),"B_Hinge":(0.05,0.12),
+   "C_R":1.60,"C_L":3.5,"C_t":0.003,"C_brida_PCD":3.1,"C_brida_N":72,"C_brida_t":0.012,
+   "D_R":1.60,"D_L":2.2,"D_t":0.003,
+   "E_R":1.0,"E_L":1.0,"E_t":0.002,"E_cone_L":0.45,"E_R2":1.60,
+   "F_R1":1.35,"F_R2":2.10,"F_L":1.7,"F_Rbase":1.35,"F_Lbase":0.6,
+   "G_L_ogiva":1.9,"G_Dmax":3.1,"G_R_sm":1.25,"G_L_sm":1.1,"G_R_adapter1":1.3,"G_R_adapter2":1.0,"G_L_adapter":0.4,
+   "H_R":0.60,"H_L":1.4,"H_Mast":(0.06,0.8),
+   "I_R":0.85,"I_Rneck":0.55,"I_Lneck":0.5,
+   "J_Panel":(1.2,0.8,0.02),"J_HGA_D":0.9,"J_HGA_p":0.11,"J_Mast":(0.04,0.6),
+   "K_Panel":(1.6,1.1,0.015),"K_TubeR":0.006,
+   "L_Trunk":0.0125,"L_Branch":0.006,"Gap":0.08
+}
+
+# -------- Offsets principales --------
+x_A,x_C,x_D,x_E_start = 0.0, 2.0, 5.0, 7.0
+
+# -------- Parte 1: Truss + Bus principal (módulo azul estilizado) --------
+TrussA = make_truss_bus("A_Truss", L_tr=P["A_L_tr"], W_tr=P["A_W_tr"], H_tr=P["A_H_tr"],
+                        b=P["A_b"], h=P["A_h"], d_cordon=P["A_cordon"], base=Vector(x_A,0,0))
+
+A_box = make_box("A_Box", *P["A_Box"], base=Vector(x_A+0.4, -P["A_Box"][1]/2.0, P["A_H_tr"]/2.0-P["A_Box"][2]/2.0))
+color(A_box,(0.10,0.30,0.65)); tag_material(A_box,"CFRP_Panel_Blue",1600,0.25,0.85,0.003)
+
+A_tank = make_cylinder("A_Tank", P["A_Tank"][0], P["A_Tank"][1], base=Vector(x_A+0.2, 0, -P["A_Tank"][0]/2.0))
+color(A_tank,(0.72,0.74,0.78)); tag_material(A_tank,"Ti_Gr5",4430,0.25,0.70,0.003)
+
+# Bus cilíndrico C
+C_bus = make_cylinder("C_Bus", P["C_R"], P["C_L"], base=Vector(x_C,0,0))
+color(C_bus,(0.7,0.72,0.75)); tag_material(C_bus,"Al2219",2840,0.25,0.75,P["C_t"])
+
+# Brida C + tornillos taladrados
+C_flange = make_annular_flange("C_Flange", R_inner=P["C_brida_PCD"]/2.0-0.08, R_outer=P["C_brida_PCD"]/2.0+0.08,
+                               t=P["C_brida_t"], base=Vector(x_C+P["C_L"]+0.01,0,0))
+color(C_flange,(0.78,0.80,0.82)); tag_material(C_flange,"Al6061",2700,0.25,0.75,P["C_brida_t"])
+C_bolts = polar_bolt_circle("Bolt_C", P["C_brida_N"], P["C_brida_PCD"]/2.0, 0.02, P["A_Bolts"][2],
+                            base=C_flange.Placement.Base.add(Vector(-0.006,0,0)))
+for b in C_bolts: color(b,(0.35,0.35,0.35)); tag_material(b,"Bolt_Steel",7850,0.20,0.70,P["A_Bolts"][2])
+# Taladrado
+fused = C_bolts[0].Shape
+for bb in C_bolts[1:]: fused = fused.fuse(bb.Shape)
+C_flange.Shape = C_flange.Shape.cut(fused)
+
+# -------- Parte 2: Sección E (nariz azul), adaptadores D/G y HGA/F/TPS --------
+# Sección E: nariz con cono y cilindro
+E_cyl = make_tube("E_Cyl", P["E_R"], P["E_t"], P["E_L"], base=Vector(x_E_start,0,0))
+color(E_cyl,(0.12,0.28,0.60)); tag_material(E_cyl,"CFRP_Blue",1600,0.25,0.85,P["E_t"])
+
+E_cone = make_cone_truncated("E_Cone", P["E_R"], P["E_R2"], P["E_cone_L"],
+                             base=Vector(x_E_start-P["E_cone_L"],0,0))
+color(E_cone,(0.14,0.30,0.62)); tag_material(E_cone,"AlHoneycomb_Blue",1200,0.25,0.80,P["E_t"])
+
+# Sección D: adaptador intermedio
+D_shell = make_tube("D_Shell", P["D_R"], P["D_t"], P["D_L"], base=Vector(x_D,0,0))
+color(D_shell,(0.62,0.64,0.68)); tag_material(D_shell,"AlHoneycomb",1200,0.25,0.80,P["D_t"])
+
+# HGA parabólica
+J_dish = make_paraboloid_dish("J_HGA_Dish", P["J_HGA_D"], P["J_HGA_p"], t=0.003,
+                              base=Vector(x_E_start+P["E_cone_L"]+P["E_L"]*0.6, -(P["E_R"]+0.6), 0))
+color(J_dish,(0.95,0.95,0.95)); tag_material(J_dish,"Al_Coated",2700,0.30,0.85,0.003)
+J_mast = make_cylinder("J_HGA_Mast", P["J_Mast"][0]/2.0, P["J_Mast"][1],
+                       base=Vector(J_dish.Placement.Base.x-0.1, -(P["E_R"]+0.6), -P["J_Mast"][0]/2.0))
+color(J_mast,(0.25,0.25,0.30)); tag_material(J_mast,"CFRP",1600,0.20,0.90,0.003)
+
+# Paneles antena laterales en C
+for side, sgn in [("J_Panel_L",1),("J_Panel_R",-1)]:
+    px,py,pz=P["J_Panel"]
+    pan=make_box(side,px,py,pz,base=Vector(x_C+P["C_L"]*0.4,sgn*(P["C_R"]+0.2),-pz/2.0))
+    color(pan,(0.95,0.85,0.2)); tag_material(pan,"Panel_Antenna",900,0.6,0.8,py)
+    mast=make_cylinder(f"{side}_Mast",P["J_Mast"][0]/2.0,P["J_Mast"][1],
+                       base=Vector(x_C+P["C_L"]*0.4-0.1,sgn*(P["C_R"]+0.2),-P["J_Mast"][0]/2.0))
+    color(mast,(0.25,0.25,0.3)); tag_material(mast,"CFRP",1600,0.2,0.9,0.003)
+
+# Radiadores K en C y D
+kx,ky,kz=P["K_Panel"]
+K1=make_box("K_Rad_C",kx,ky,kz,base=Vector(x_C+0.6,P["C_R"]+0.05,-kz/2.0))
+K2=make_box("K_Rad_D",kx,ky,kz,base=Vector(x_D+0.4,-(P["D_R"]+0.05)-ky,-kz/2.0))
+for k in [K1,K2]: color(k,(0.9,0.9,0.95)); tag_material(k,"Radiator",120,0.15,0.85,kz)
+# Lazos de refrigeración (huecos)
+for baseX in [K1.Placement.Base.x+kx/2.0, K2.Placement.Base.x+kx/2.0]:
+    loop = make_tube("K_Loop", P["K_TubeR"], t=P["K_TubeR"]*0.3, L=1.2, base=Vector(baseX, 0.0, -P["K_TubeR"]))
+    color(loop,(0.8,0.8,0.85)); tag_material(loop,"CoolantTube",2700,0.3,0.8,0.002)
+
+# Arnés L (dos troncos separados)
+for idx,zsgn in enumerate([1,-1]):
+    L_len=(x_D+P["D_L"]+P["G_L_ogiva"]+2.0)-(x_A-0.5)
+    wire=make_cylinder(f"L_Trunk_{idx+1}",P["L_Trunk"],L_len,base=Vector(x_A-0.5,P["C_R"]+0.3,zsgn*(P["C_R"]+0.3)))
+    color(wire,(0.2,0.2,0.2)); tag_material(wire,"Harness",3500,0.3,0.8,0.01)
+
+# Airlock I (esfera + cuello) en lateral de E
+I_sph=make_sphere("I_Sphere",P["I_R"],center=Vector(x_E_start+P["E_cone_L"]+P["E_L"]*0.2, P["E_R"]+P["I_R"]+0.15, 0))
+color(I_sph,(0.88,0.9,0.95)); tag_material(I_sph,"Ti_Al",3000,0.25,0.7,0.003)
+
+I_neck=make_cylinder("I_Neck",P["I_Rneck"],P["I_Lneck"],
+                     base=Vector(x_E_start+P["E_cone_L"]+P["E_L"]*0.2-P["I_Lneck"], P["E_R"]+0.15, 0))
+color(I_neck,(0.85,0.87,0.92)); tag_material(I_neck,"Al2219",2840,0.25,0.7,0.003)
+for i in range(4):
+    dz=-0.3+0.2*i
+    bracket=make_box(f"I_Bracket_{i+1}",0.25,0.05,0.12,
+                     base=Vector(I_neck.Placement.Base.x+0.02, P["E_R"]+0.12, dz))
+    color(bracket,(0.7,0.7,0.75)); tag_material(bracket,"Al6061",2700,0.2,0.8,0.006)
+
+# Brida y tornillería extra en E extremo (EC)
+EC_N,EC_PCD,EC_x=P["C_brida_N"],P["C_brida_PCD"]/2.0,x_E_start
+EC_flange = make_annular_flange("EC_Flange", R_inner=EC_PCD-0.06, R_outer=EC_PCD+0.06, t=0.012, base=Vector(EC_x,0,0))
+color(EC_flange,(0.78,0.80,0.82)); tag_material(EC_flange,"Al6061",2700,0.25,0.75,0.012)
+EC_bolts=polar_bolt_circle("Bolt_EC",EC_N,EC_PCD,0.02,0.014,base=Vector(EC_x-0.01,0,0))
+for b in EC_bolts: color(b,(0.35,0.35,0.35)); tag_material(b,"Bolt_Steel",7850,0.2,0.7,0.014)
+fused=EC_bolts[0].Shape
+for bb in EC_bolts[1:]: fused=fused.fuse(bb.Shape)
+EC_flange.Shape=EC_flange.Shape.cut(fused)
+
+# Brida y tornillería entre D y E (ED)
+ED_N,ED_PCD,ED_x=P["C_brida_N"],P["C_brida_PCD"]/2.0,x_E_start+P["E_cone_L"]+P["E_L"]+P["E_cone_L"]
+ED_flange = make_annular_flange("ED_Flange", R_inner=ED_PCD-0.06, R_outer=ED_PCD+0.06, t=0.012, base=Vector(ED_x,0,0))
+color(ED_flange,(0.78,0.8,0.82)); tag_material(ED_flange,"AlTi",3000,0.3,0.7,0.012)
+ED_bolts=polar_bolt_circle("Bolt_ED",ED_N,ED_PCD,0.02,0.014,base=Vector(ED_x+0.01,0,0))
+for b in ED_bolts: color(b,(0.35,0.35,0.35)); tag_material(b,"Bolt_Steel",7850,0.2,0.7,0.014)
+fused=ED_bolts[0].Shape
+for bb in ED_bolts[1:]: fused=fused.fuse(bb.Shape)
+ED_flange.Shape=ED_flange.Shape.cut(fused)
+
+# Anillo de acoplamiento F (sobre base F definida aquí)
+F_base = make_cylinder("F_Base", P["F_Rbase"], P["F_Lbase"], base=Vector(x_E_start+P["E_cone_L"]+0.2, 0, 0))
+color(F_base,(0.7,0.72,0.76)); tag_material(F_base,"Al2219",2840,0.25,0.75,0.003)
+F_ring_R=P["F_R2"]/2.0; F_ring_x=F_base.Placement.Base.x+0.02
+F_ring=make_annular_flange("F_Dock_Ring",R_inner=F_ring_R-0.06,R_outer=F_ring_R+0.06,t=0.012,
+                           base=Vector(F_ring_x,F_base.Placement.Base.y,F_base.Placement.Base.z))
+color(F_ring,(0.78,0.78,0.82)); tag_material(F_ring,"Ti_Al",3000,0.3,0.7,0.012)
+F_bolts=polar_bolt_circle("Bolt_F_Dock",60,F_ring_R,0.02,0.014,base=Vector(F_ring_x-0.005,F_base.Placement.Base.y,F_base.Placement.Base.z))
+for b in F_bolts: color(b,(0.35,0.35,0.35)); tag_material(b,"Bolt_Steel",7850,0.2,0.7,0.014)
+fused=F_bolts[0].Shape
+for bb in F_bolts[1:]: fused=fused.fuse(bb.Shape)
+F_ring.Shape=F_ring.Shape.cut(fused)
+
+# Anillo adaptador G (creo adaptador para referencia)
+G_adapter = make_cone_truncated("G_Adapter", P["G_R_adapter1"], P["G_R_adapter2"], P["G_L_adapter"],
+                                base=Vector(x_D+P["D_L"]+0.2,0,0))
+color(G_adapter,(0.62,0.64,0.68)); tag_material(G_adapter,"Ti_Gr5",4430,0.25,0.70,0.003)
+G_ring_R=2.6/2.0; G_ring_x=G_adapter.Placement.Base.x-0.01
+G_ring=make_annular_flange("G_Adapter_Ring",R_inner=G_ring_R-0.07,R_outer=G_ring_R+0.07,t=0.012,base=Vector(G_ring_x,0,0))
+color(G_ring,(0.78,0.8,0.82)); tag_material(G_ring,"AlTi",3000,0.3,0.7,0.012)
+G_bolts=polar_bolt_circle("Bolt_G_Adapt",80,G_ring_R,0.02,0.014,base=Vector(G_ring_x-0.005,0,0))
+for b in G_bolts: color(b,(0.35,0.35,0.35)); tag_material(b,"Bolt_Steel",7850,0.2,0.7,0.014)
+fused=G_bolts[0].Shape
+for bb in G_bolts[1:]: fused=fused.fuse(bb.Shape)
+G_ring.Shape=G_ring.Shape.cut(fused)
+
+# -------- TPS segmentado delante del HGA + rim en sombra --------
+def make_tps_shield(name, D, t_total, cc_t, foam_t, ceramic_t, rim, base=Vector(0,0,0)):
+    R_outer=D/2.0
+    core=Part.makeCylinder(R_outer,t_total,Vector(0,0,0),Vector(1,0,0))
+    obj=add_shape(name, core, base); color(obj,(0.85,0.82,0.78)); tag_material(obj,"Ceramic_TPS",2300,0.25,0.90,ceramic_t)
+    cc=make_tube(f"{name}_CC", R_outer-ceramic_t, cc_t, t_total, base); color(cc,(0.18,0.18,0.18)); tag_material(cc,"C_Carbon",1700,0.85,0.85,cc_t)
+    foam=make_tube(f"{name}_Foam", R_outer-ceramic_t-cc_t, foam_t, t_total, base); color(foam,(0.75,0.80,0.85)); tag_material(foam,"SiC_Aerogel",100,0.05,0.90,foam_t)
+    petals=[]; N=12; gap=0.006; dtheta=2*math.pi/N
+    for i in range(N):
+        th0=i*dtheta+gap/2.0; th1=(i+1)*dtheta-gap/2.0
+        seg=Part.makeCylinder(R_outer-rim, t_total, Vector(0,0,0), Vector(1,0,0), angle=math.degrees(th1-th0))
+        pObj=add_shape(f"{name}_Petal_{i+1:02d}", seg, base); color(pObj,(0.86,0.83,0.80)); tag_material(pObj,"Ceramic_TPS",2300,0.25,0.90,ceramic_t); petals.append(pObj)
+    rim_t=Part.makeCylinder(R_outer, t_total*0.25, Vector(0,0,0), Vector(1,0,0)).cut(
+          Part.makeCylinder(R_outer-rim, t_total*0.25+1e-6, Vector(0,0,0), Vector(1,0,0)))
+    rim_obj=add_shape(f"{name}_Rim", rim_t, base.add(Vector(-t_total*0.25,0,0))); color(rim_obj,(0.22,0.22,0.24)); tag_material(rim_obj,"C_Carbon",1700,0.85,0.85,cc_t)
+    return obj, cc, foam, petals, rim_obj
+
+TPS_objs = make_tps_shield("TPS_Shield", D=P["J_HGA_D"]*0.85, t_total=P["L_Trunk"], cc_t=P["L_Branch"],
+                           foam_t=P["L_Branch"], ceramic_t=P["L_Branch"], rim=P["Gap"],
+                           base=Vector(x_E_start+P["E_cone_L"]+0.25, 0, 0))
+
+# -------- Recompute y export --------
+App.ActiveDocument.recompute()
+
+# Export STEP y fallback a STL
+try:
+    import ImportGui as IG
+except:
+    try:
+        import Import as IG
+    except:
+        IG = None
+
+objs_to_export=[o for o in doc.Objects if hasattr(o,"Shape") and not o.isDerivedFrom("App::DocumentObjectGroup")]
+if IG:
+    IG.export(objs_to_export, App.getUserAppDataDir()+"satellite_parametric.step")
+else:
+    MeshPart.export(objs_to_export, App.getUserAppDataDir()+"satellite_parametric.stl")
+
+print("Macro completada y exportada. Ajusta P[...] y recomputa.")

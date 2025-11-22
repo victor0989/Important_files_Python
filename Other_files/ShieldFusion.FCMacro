@@ -1,0 +1,293 @@
+# -*- coding: utf-8 -*-
+import FreeCAD as App, FreeCADGui as Gui, Part, math
+
+DOC_NAME = "Ship_Solid_Unified"
+if App.ActiveDocument is None or App.ActiveDocument.Label != DOC_NAME:
+    App.newDocument(DOC_NAME)
+doc = App.ActiveDocument
+
+P = {
+    # Dimensiones ampliadas para nave espacial de largo alcance
+    "nose_len": 1200.0, "nose_base_d": 1650.0, "nose_cap_d": 780.0,
+    "mid_len": 3450.0, "mid_d": 2700.0,
+    "rear_len": 2550.0, "rear_d": 3300.0,
+    "cockpit_w": 1470.0, "cockpit_h": 780.0, "cockpit_l": 1290.0,
+    "cockpit_x0": 930.0, "cockpit_blend_r": 180.0,
+    "reactor_d": 2250.0, "reactor_l": 3150.0, "reactor_cx": 5100.0,
+    "nozzle_throat_d": 780.0, "nozzle_exit_d": 3000.0,
+    "nozzle_l": 2850.0, "nozzle_cx": 6750.0,
+    "booster_n": 6, "booster_d": 1350.0, "booster_l": 2475.0,
+    "booster_ring_r": 2475.0, "booster_nozzle_d": 930.0, "booster_nozzle_l": 630.0,
+    "wing_root_w": 1950.0, "wing_tip_w": 480.0, "wing_chord": 975.0,
+    "wing_sweep_deg": 27.0,
+    "tank_r": 630.0, "tank_l": 3150.0, "tank_off": 1950.0,
+    "sphere_r": 720.0, "sphere_off": 2550.0,
+    "mast_l": 1650.0, "mast_r": 66.0, "dish_r": 630.0,
+    "leg_r": 165.0, "leg_l": 1320.0, "foot_r": 420.0, "foot_t": 82.5,
+    # Nuevos parámetros para escudos y componentes avanzados
+    "heat_shield_t": 150.0, "heat_shield_r": 900.0,
+    "solar_panel_l": 2400.0, "solar_panel_w": 1200.0, "solar_panel_t": 30.0,
+    "rtg_n": 3, "rtg_d": 300.0, "rtg_l": 600.0,
+    "antenna_hga_r": 800.0, "antenna_hga_t": 50.0,
+    "boom_l": 1800.0, "boom_r": 20.0,
+    "carbon_shield_t": 50.0,
+}
+
+def rot_to_x(): return App.Rotation(App.Vector(0,1,0),90)
+
+# -----------------------------
+# Nariz con loft sólido
+# -----------------------------
+def make_nose():
+    radii = [P["nose_base_d"]/2.0, 450.0, 260.0, P["nose_cap_d"]/2.0]
+    xpos  = [0, P["nose_len"]*0.35, P["nose_len"]*0.7, P["nose_len"]]
+    sections = [Part.makeCircle(r, App.Vector(x,0,0), App.Vector(1,0,0)) for r,x in zip(radii,xpos)]
+    return Part.makeLoft(sections, True)
+
+# -----------------------------
+# Fuselaje medio y trasero
+# -----------------------------
+def make_body():
+    mid = Part.makeCylinder(P["mid_d"]/2.0, P["mid_len"])
+    mid.Placement = App.Placement(App.Vector(P["nose_len"],0,0), rot_to_x())
+    rear = Part.makeCylinder(P["rear_d"]/2.0, P["rear_len"])
+    rear.Placement = App.Placement(App.Vector(P["nose_len"]+P["mid_len"],0,0), rot_to_x())
+    return mid.fuse(rear)
+
+# -----------------------------
+# Cockpit integrado
+# -----------------------------
+def make_cockpit():
+    box = Part.makeBox(P["cockpit_l"], P["cockpit_w"], P["cockpit_h"])
+    box.Placement = App.Placement(App.Vector(P["cockpit_x0"],-P["cockpit_w"]/2.0,-P["cockpit_h"]/2.0),App.Rotation())
+    sphere = Part.makeSphere(P["cockpit_blend_r"])
+    sphere.Placement = App.Placement(App.Vector(P["cockpit_x0"]-P["cockpit_blend_r"]/2.0,0,0),App.Rotation())
+    return box.fuse(sphere)
+
+# -----------------------------
+# Reactor + boquilla
+# -----------------------------
+def make_reactor():
+    core = Part.makeCylinder(P["reactor_d"]/2.0, P["reactor_l"])
+    core.Placement = App.Placement(App.Vector(P["reactor_cx"]-P["reactor_l"]/2.0,0,0), rot_to_x())
+    throat = Part.makeCylinder(P["nozzle_throat_d"]/2.0, 260.0)
+    throat.Placement = App.Placement(App.Vector(P["nozzle_cx"]-P["nozzle_l"]/2.0-130.0,0,0), rot_to_x())
+    cone = Part.makeCone(P["nozzle_throat_d"]/2.0, P["nozzle_exit_d"]/2.0, P["nozzle_l"])
+    cone.Placement = App.Placement(App.Vector(P["nozzle_cx"]-P["nozzle_l"]/2.0,0,0), rot_to_x())
+    return core.fuse(throat).fuse(cone)
+
+# -----------------------------
+# Boosters radiales
+# -----------------------------
+def make_boosters():
+    boosters=[]
+    base_x = P["nose_len"]+P["mid_len"]+P["rear_len"]-P["booster_l"]*0.6
+    for k in range(P["booster_n"]):
+        ang=k*(360.0/P["booster_n"])
+        y=P["booster_ring_r"]*math.cos(math.radians(ang))
+        z=P["booster_ring_r"]*math.sin(math.radians(ang))
+        cyl=Part.makeCylinder(P["booster_d"]/2.0,P["booster_l"])
+        cyl.Placement=App.Placement(App.Vector(base_x, y, z), rot_to_x())
+        noz=Part.makeCone(P["booster_nozzle_d"]/2.0,P["booster_nozzle_d"]/4.0,P["booster_nozzle_l"])
+        noz.Placement=App.Placement(App.Vector(base_x+P["booster_l"],y,z),rot_to_x())
+        boosters.append(cyl.fuse(noz))
+    u=boosters[0]
+    for b in boosters[1:]: u=u.fuse(b)
+    return u
+
+# -----------------------------
+# Alas trapezoidales
+# -----------------------------
+def make_wings():
+    wings=[]
+    for side in [1,-1]:
+        root=P["wing_root_w"]; tip=P["wing_tip_w"]; chord=P["wing_chord"]; sweep=P["wing_sweep_deg"]
+        x0=P["nose_len"]+900; x1=x0+chord; z=0
+        p1=App.Vector(x0,0,z+root/2.0); p2=App.Vector(x1,0,z+tip/2.0)
+        p3=App.Vector(x1,0,z-tip/2.0); p4=App.Vector(x0,0,z-root/2.0)
+        wire=Part.makePolygon([p1,p2,p3,p4,p1]); face=Part.Face(wire)
+        solid=face.extrude(App.Vector(0,side*(root-tip),0))
+        wings.append(solid)
+    return wings[0].fuse(wings[1])
+
+# -----------------------------
+# Tanques y esferas
+# -----------------------------
+def make_tanks():
+    tL=Part.makeCylinder(P["tank_r"],P["tank_l"])
+    tL.Placement=App.Placement(App.Vector(P["nose_len"]+1100,P["tank_off"],0),rot_to_x())
+    tR=Part.makeCylinder(P["tank_r"],P["tank_l"])
+    tR.Placement=App.Placement(App.Vector(P["nose_len"]+1100,-P["tank_off"],0),rot_to_x())
+    sL=Part.makeSphere(P["sphere_r"])
+    sL.Placement=App.Placement(App.Vector(P["nose_len"]+2600,P["sphere_off"],0),App.Rotation())
+    sR=Part.makeSphere(P["sphere_r"])
+    sR.Placement=App.Placement(App.Vector(P["nose_len"]+2600,-P["sphere_off"],0),App.Rotation())
+    return tL.fuse(tR).fuse(sL).fuse(sR)
+
+# -----------------------------
+# Antena (mástil + plato)
+# -----------------------------
+def make_antenna():
+    mast = Part.makeCylinder(P["mast_r"], P["mast_l"])
+    mast.Placement = App.Placement(App.Vector(P["nose_len"]+P["mid_len"], P["mid_d"]/2.0+130.0, 0), rot_to_x())
+    dish = Part.makeSphere(P["dish_r"])
+    # Aplano el plato para simular antena parabólica
+    try:
+        dish.Placement.Scale = App.Vector(1,1,0.3)
+    except:
+        pass
+    dish.Placement = App.Placement(App.Vector(P["nose_len"]+P["mid_len"]+P["mast_l"], P["mid_d"]/2.0+130.0, 0), App.Rotation())
+    return mast.fuse(dish)
+
+# -----------------------------
+# Tren de aterrizaje radial
+# -----------------------------
+def make_landing_gear():
+    legs=[]
+    for angle in [0,90,180,270]:
+        leg = Part.makeCylinder(P["leg_r"], P["leg_l"])
+        lx = (P["mid_d"]/2.0 - 135.0)*math.cos(math.radians(angle))
+        lz = (P["mid_d"]/2.0 - 135.0)*math.sin(math.radians(angle))
+        leg.Placement = App.Placement(App.Vector(P["nose_len"]-270.0, lx, lz), rot_to_x())
+        foot = Part.makeCylinder(P["foot_r"], P["foot_t"])
+        foot.Placement = App.Placement(App.Vector(P["nose_len"]-270.0+P["leg_l"], lx, lz), rot_to_x())
+        legs.append(leg.fuse(foot))
+    u = legs[0]
+    for l in legs[1:]:
+        u = u.fuse(l)
+    return u
+
+# -----------------------------
+# Escudo térmico ablativo (para aproximación solar)
+# -----------------------------
+def make_heat_shield():
+    shield = Part.makeCylinder(P["heat_shield_r"], P["heat_shield_t"])
+    shield.Placement = App.Placement(App.Vector(P["nose_len"] - P["heat_shield_t"]/2.0, 0, 0), rot_to_x())
+    return shield
+
+# -----------------------------
+# Paneles solares desplegables
+# -----------------------------
+def make_solar_panels():
+    panels = []
+    for side in [1, -1]:
+        panel = Part.makeBox(P["solar_panel_l"], P["solar_panel_w"], P["solar_panel_t"])
+        panel.Placement = App.Placement(App.Vector(P["nose_len"] + P["mid_len"]/2.0, side * (P["mid_d"]/2.0 + P["solar_panel_w"]/2.0), P["mid_d"]/2.0 + P["solar_panel_t"]/2.0), App.Rotation())
+        panels.append(panel)
+    return panels[0].fuse(panels[1])
+
+# -----------------------------
+# Generadores termoeléctricos de radioisótopos (RTGs)
+# -----------------------------
+def make_rtgs():
+    rtgs = []
+    for i in range(P["rtg_n"]):
+        rtg = Part.makeCylinder(P["rtg_d"]/2.0, P["rtg_l"])
+        angle = i * (360.0 / P["rtg_n"])
+        x = P["nose_len"] + P["mid_len"] + P["rear_len"] - P["rtg_l"]/2.0
+        y = (P["rear_d"]/2.0 + 200.0) * math.cos(math.radians(angle))
+        z = (P["rear_d"]/2.0 + 200.0) * math.sin(math.radians(angle))
+        rtg.Placement = App.Placement(App.Vector(x, y, z), rot_to_x())
+        rtgs.append(rtg)
+    u = rtgs[0]
+    for r in rtgs[1:]:
+        u = u.fuse(r)
+    return u
+
+# -----------------------------
+# Antena de alta ganancia (HGA)
+# -----------------------------
+def make_hga():
+    dish = Part.makeCylinder(P["antenna_hga_r"], P["antenna_hga_t"])
+    dish.Placement = App.Placement(App.Vector(P["nose_len"] + P["mid_len"] + P["mast_l"] + P["antenna_hga_t"]/2.0, P["mid_d"]/2.0 + 195.0, 0), rot_to_x())
+    return dish
+
+# -----------------------------
+# Brazos científicos (booms)
+# -----------------------------
+def make_science_booms():
+    booms = []
+    for side in [1, -1]:
+        boom = Part.makeCylinder(P["boom_r"], P["boom_l"])
+        boom.Placement = App.Placement(App.Vector(P["nose_len"] + P["mid_len"]/2.0, side * (P["mid_d"]/2.0 + 300.0), P["mid_d"]/2.0 + P["boom_l"]/2.0), rot_to_x())
+        booms.append(boom)
+    return booms[0].fuse(booms[1])
+
+# -----------------------------
+# Escudo de carbono para radiación
+# -----------------------------
+def make_carbon_shield():
+    shield = Part.makeCylinder(P["mid_d"]/2.0 + P["carbon_shield_t"], P["nose_len"] + P["mid_len"] + P["rear_len"])
+    shield.Placement = App.Placement(App.Vector(0, 0, 0), rot_to_x())
+    inner = Part.makeCylinder(P["mid_d"]/2.0, P["nose_len"] + P["mid_len"] + P["rear_len"])
+    inner.Placement = App.Placement(App.Vector(0, 0, 0), rot_to_x())
+    return shield.cut(inner)
+
+# -----------------------------
+# Ensamblaje completo con colores realistas
+# -----------------------------
+nose = make_nose()
+body = make_body()
+cockpit = make_cockpit()
+reactor = make_reactor()
+boosters = make_boosters()
+wings = make_wings()
+tanks = make_tanks()
+antenna = make_antenna()
+landing = make_landing_gear()
+heat_shield = make_heat_shield()
+solar_panels = make_solar_panels()
+rtgs = make_rtgs()
+hga = make_hga()
+science_booms = make_science_booms()
+carbon_shield = make_carbon_shield()
+
+# Fusión del cuerpo principal
+main_body = nose.fuse(body).fuse(cockpit).fuse(reactor).fuse(wings).fuse(tanks).fuse(landing).fuse(heat_shield).fuse(carbon_shield)
+
+# Crear objetos separados para componentes mecánicos con colores realistas
+ship_obj = doc.addObject("Part::Feature", "Main_Body")
+ship_obj.Shape = main_body
+ship_obj.ViewObject.ShapeColor = (0.5, 0.5, 0.5)  # Gris metálico
+ship_obj.ViewObject.DisplayMode = "Shaded"
+
+boosters_obj = doc.addObject("Part::Feature", "Boosters")
+boosters_obj.Shape = boosters
+boosters_obj.ViewObject.ShapeColor = (0.3, 0.3, 0.3)  # Gris oscuro metálico
+boosters_obj.ViewObject.DisplayMode = "Shaded"
+
+antenna_obj = doc.addObject("Part::Feature", "Antenna")
+antenna_obj.Shape = antenna
+antenna_obj.ViewObject.ShapeColor = (0.9, 0.9, 0.9)  # Blanco plateado
+antenna_obj.ViewObject.DisplayMode = "Shaded"
+
+solar_panels_obj = doc.addObject("Part::Feature", "Solar_Panels")
+solar_panels_obj.Shape = solar_panels
+solar_panels_obj.ViewObject.ShapeColor = (0.1, 0.1, 0.2)  # Azul oscuro
+solar_panels_obj.ViewObject.DisplayMode = "Shaded"
+
+rtgs_obj = doc.addObject("Part::Feature", "RTGs")
+rtgs_obj.Shape = rtgs
+rtgs_obj.ViewObject.ShapeColor = (0.8, 0.6, 0.0)  # Dorado
+rtgs_obj.ViewObject.DisplayMode = "Shaded"
+
+hga_obj = doc.addObject("Part::Feature", "HGA")
+hga_obj.Shape = hga
+hga_obj.ViewObject.ShapeColor = (0.7, 0.7, 0.8)  # Gris claro
+hga_obj.ViewObject.DisplayMode = "Shaded"
+
+science_booms_obj = doc.addObject("Part::Feature", "Science_Booms")
+science_booms_obj.Shape = science_booms
+science_booms_obj.ViewObject.ShapeColor = (0.4, 0.4, 0.4)  # Gris medio
+science_booms_obj.ViewObject.DisplayMode = "Shaded"
+
+doc.recompute()
+
+try:
+    Gui.ActiveDocument.ActiveView.viewAxonometric()
+    Gui.SendMsgToActiveView("ViewFit")
+except:
+    pass
+
+print("Macro 'Ship_Solid_Unified' lista en '{}'.".format(doc.Label))
+

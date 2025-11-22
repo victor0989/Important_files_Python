@@ -1,0 +1,728 @@
+# -*- coding: utf-8 -*-
+# Macro FreeCAD: Nave Espacial Tipo Space Shuttle - Diseño Realista para Misiones Críticas
+# Nave completa con forma tipo Shuttle, bahía de carga, alas delta, propulsión OMS, acoplamiento espacial
+# Autor: AI Assistant - Versión Shuttle Realista
+# Unidades: mm, eje longitudinal = X
+
+import FreeCAD as App, FreeCADGui as Gui, Part, math
+from typing import Dict, List, Optional, Tuple
+
+# ========================
+# Configuración Avanzada - Diseño Space Shuttle
+# ========================
+class SpaceshipConfig:
+    def __init__(self):
+        self.scale_factor = 1.0
+        self.enable_3d_printing_supports = True
+        self.enable_aerodynamic_mode = True
+        self.radiation_shield_layers = 7  # Más capas para misiones críticas
+        self.propulsion_type = "OMS_HYDROGEN"  # OMS_HYDROGEN, LOX_METHANE, ION
+        self.command_module_type = "SHUTTLE_CREW_COMPARTMENT"  # SHUTTLE_CREW_COMPARTMENT, LARGE
+        self.mission_type = "SPACE_STATION"  # SPACE_STATION, DEEP_SPACE, LUNAR
+        self.enable_emergency_systems = True
+        self.enable_docking_system = True
+
+    def get_scaled_param(self, param: float) -> float:
+        return param * self.scale_factor
+
+CONFIG = SpaceshipConfig()
+
+DOC_NAME = "Space_Shuttle_Type_Spaceship"
+if App.ActiveDocument is None or App.ActiveDocument.Label != DOC_NAME:
+    App.newDocument(DOC_NAME)
+doc = App.ActiveDocument
+
+# ========================
+# Parámetros Unificados - Diseño Space Shuttle Realista
+# ========================
+P = {
+    # Dimensiones generales (escala Space Shuttle)
+    "total_length": CONFIG.get_scaled_param(37000.0),  # Longitud total como Shuttle
+    "fuselage_width": CONFIG.get_scaled_param(2800.0),  # Ancho del fuselaje
+    "fuselage_height": CONFIG.get_scaled_param(1700.0), # Altura del fuselaje
+    "hull_wall_t": CONFIG.get_scaled_param(100.0),
+
+    # Bahía de carga (payload bay) - característica clave del Shuttle
+    "cargo_bay_length": CONFIG.get_scaled_param(18000.0),
+    "cargo_bay_width": CONFIG.get_scaled_param(4500.0),
+    "cargo_bay_height": CONFIG.get_scaled_param(4000.0),
+    "cargo_bay_doors_t": CONFIG.get_scaled_param(50.0),
+
+    # Nariz aerodinámica
+    "nose_length": CONFIG.get_scaled_param(3000.0),
+    "nose_base_w": CONFIG.get_scaled_param(2800.0),
+    "nose_cap_w": CONFIG.get_scaled_param(500.0),
+
+    # Cola vertical
+    "vertical_tail_h": CONFIG.get_scaled_param(6000.0),
+    "vertical_tail_w": CONFIG.get_scaled_param(800.0),
+    "vertical_tail_t": CONFIG.get_scaled_param(150.0),
+
+    # Alas delta (características del Shuttle)
+    "delta_wing_span": CONFIG.get_scaled_param(24000.0),
+    "delta_wing_leading_edge": CONFIG.get_scaled_param(12000.0),
+    "delta_wing_trailing_edge": CONFIG.get_scaled_param(8000.0),
+    "delta_wing_t": CONFIG.get_scaled_param(200.0),
+    "wing_sweep_deg": 81.0,  # Sweep realista del Shuttle
+
+    # Superficies de control aerodinámico
+    "aileron_span": CONFIG.get_scaled_param(4000.0), "aileron_chord": CONFIG.get_scaled_param(1500.0),
+    "elevon_span": CONFIG.get_scaled_param(6000.0), "elevon_chord": CONFIG.get_scaled_param(2000.0),
+    "rudder_h": CONFIG.get_scaled_param(3000.0), "rudder_w": CONFIG.get_scaled_param(1000.0),
+
+    # Blindaje de radiación mejorado para misiones críticas
+    "rad_shield_layers": CONFIG.radiation_shield_layers,
+    "rad_layer_t": CONFIG.get_scaled_param(80.0),
+    "rad_materials": ["LEAD", "TUNGSTEN", "BORON", "WATER", "CARBON", "POLYETHYLENE", "HYDROGEN_RICH"],
+
+    # TPS avanzado para re-entrada atmosférica
+    "tps_thickness": CONFIG.get_scaled_param(250.0),
+    "tps_material_layers": ["CARBON_CARBON", "ABLATIVE", "CERAMIC", "FIBERGLASS"],
+
+    # Propulsión OMS (Orbital Maneuvering System) - como Shuttle
+    "oms_pod_d": CONFIG.get_scaled_param(800.0), "oms_pod_l": CONFIG.get_scaled_param(2000.0), "oms_pod_n": 2,
+    "oms_engine_d": CONFIG.get_scaled_param(300.0), "oms_engine_l": CONFIG.get_scaled_param(800.0), "oms_engine_n": 2,
+    "rcs_thruster_d": CONFIG.get_scaled_param(150.0), "rcs_thruster_l": CONFIG.get_scaled_param(400.0), "rcs_thruster_n": 44,
+
+    # Tanques de propelente (hidrógeno/oxígeno para OMS)
+    "hydrogen_tank_d": CONFIG.get_scaled_param(500.0), "hydrogen_tank_l": CONFIG.get_scaled_param(1000.0), "hydrogen_tank_n": 2,
+    "oxygen_tank_d": CONFIG.get_scaled_param(600.0), "oxygen_tank_l": CONFIG.get_scaled_param(1200.0), "oxygen_tank_n": 2,
+
+    # Módulo de tripulación (crew compartment)
+    "crew_compartment_l": CONFIG.get_scaled_param(5000.0), "crew_compartment_w": CONFIG.get_scaled_param(2500.0), "crew_compartment_h": CONFIG.get_scaled_param(2000.0),
+    "crew_capacity": 8,  # Capacidad para misiones críticas
+
+    # Sistemas de soporte vital y emergencia
+    "life_support_d": CONFIG.get_scaled_param(1000.0), "life_support_l": CONFIG.get_scaled_param(2000.0),
+    "emergency_oxygen_d": CONFIG.get_scaled_param(300.0), "emergency_oxygen_l": CONFIG.get_scaled_param(500.0), "emergency_oxygen_n": 4,
+
+    # Sistema de acoplamiento para estaciones espaciales
+    "docking_system_d": CONFIG.get_scaled_param(1200.0), "docking_system_l": CONFIG.get_scaled_param(800.0),
+    "docking_port_type": "APAS_95",  # Tipo de puerto de acoplamiento
+
+    # Energía y comunicaciones mejoradas
+    "solar_panel_l": CONFIG.get_scaled_param(3000.0), "solar_panel_w": CONFIG.get_scaled_param(1200.0), "solar_panel_t": CONFIG.get_scaled_param(20.0), "solar_n": 2,
+    "fuel_cell_n": 3, "fuel_cell_d": CONFIG.get_scaled_param(400.0), "fuel_cell_l": CONFIG.get_scaled_param(600.0),
+    "antenna_dish_r": CONFIG.get_scaled_param(500.0), "antenna_dish_t": CONFIG.get_scaled_param(25.0),
+    "ku_band_antenna_r": CONFIG.get_scaled_param(300.0), "ku_band_antenna_t": CONFIG.get_scaled_param(15.0),
+
+    # Instrumentos científicos para misiones críticas
+    "magnetometer_boom_l": CONFIG.get_scaled_param(1500.0), "magnetometer_boom_r": CONFIG.get_scaled_param(20.0),
+    "particle_detector_d": CONFIG.get_scaled_param(250.0), "particle_detector_l": CONFIG.get_scaled_param(300.0),
+    "science_boom_l": CONFIG.get_scaled_param(2500.0), "science_boom_r": CONFIG.get_scaled_param(30.0),
+
+    # Tren de aterrizaje mejorado (como Shuttle)
+    "main_gear_strut_l": CONFIG.get_scaled_param(1500.0), "main_gear_strut_d": CONFIG.get_scaled_param(250.0), "main_gear_n": 2,
+    "nose_gear_strut_l": CONFIG.get_scaled_param(1000.0), "nose_gear_strut_d": CONFIG.get_scaled_param(200.0), "nose_gear_n": 1,
+    "landing_gear_wheel_d": CONFIG.get_scaled_param(400.0), "landing_gear_wheel_w": CONFIG.get_scaled_param(150.0),
+
+    # Detalles para impresión 3D y realismo
+    "min_wall_t": 3.0,
+    "fillet_r": CONFIG.get_scaled_param(50.0),
+    "support_spacing": CONFIG.get_scaled_param(800.0),
+}
+
+# Materiales Expandidos con Propiedades Avanzadas
+MATERIALS = {
+    'TITANIUM': {'name': 'Ti-6Al-4V', 'rho': 4430.0, 'color': (0.7, 0.7, 0.8), 'yield_strength': 880e6},
+    'CARBON_FIBER': {'name': 'Carbon Fiber Composite', 'rho': 1600.0, 'color': (0.2, 0.2, 0.2), 'yield_strength': 600e6},
+    'CARBON_CARBON': {'name': 'Carbon-Carbon TPS', 'rho': 1800.0, 'color': (0.1, 0.1, 0.1), 'thermal_resist': 3000.0},
+    'ABLATIVE': {'name': 'Ablative Material', 'rho': 1200.0, 'color': (0.8, 0.4, 0.0), 'thermal_resist': 2500.0},
+    'CERAMIC': {'name': 'Ceramic Insulation', 'rho': 2400.0, 'color': (0.9, 0.9, 0.8), 'thermal_resist': 2000.0},
+    'LEAD': {'name': 'Lead Shield', 'rho': 11340.0, 'color': (0.3, 0.3, 0.3), 'radiation_absorption': 0.95},
+    'TUNGSTEN': {'name': 'Tungsten', 'rho': 19300.0, 'color': (0.4, 0.4, 0.4), 'radiation_absorption': 0.98},
+    'BORON': {'name': 'Boron Carbide', 'rho': 2500.0, 'color': (0.1, 0.1, 0.1), 'neutron_absorption': 0.9},
+    'POLYETHYLENE': {'name': 'HDPE Radiation Shield', 'rho': 950.0, 'color': (0.8, 0.8, 0.9), 'neutron_absorption': 0.8},
+    'LIQUID_OXYGEN': {'name': 'LOX Tank', 'rho': 1140.0, 'color': (0.0, 0.5, 1.0), 'energy_density': 5.4},
+    'METHANE': {'name': 'Liquid Methane', 'rho': 420.0, 'color': (0.6, 0.8, 0.2), 'energy_density': 8.0},
+    'STEEL': {'name': 'Stainless Steel', 'rho': 8000.0, 'color': (0.6, 0.6, 0.6), 'yield_strength': 200e6},
+}
+
+# ========================
+# Clases y Funciones Avanzadas
+# ========================
+class ComponentFactory:
+    @staticmethod
+    def create_cylinder(d: float, l: float, cx: float = 0, cy: float = 0, cz: float = 0, axis: str = 'x') -> Part.Shape:
+        r = d / 2.0
+        cyl = Part.makeCylinder(r, l)
+        rot = App.Rotation(App.Vector(0,1,0), 90) if axis == 'x' else App.Rotation()
+        cyl.Placement = App.Placement(App.Vector(cx - l/2.0 if axis == 'x' else cx,
+                                                cy, cz), rot)
+        return cyl
+
+    @staticmethod
+    def create_cone(d1: float, d2: float, l: float, cx: float = 0, cy: float = 0, cz: float = 0, axis: str = 'x') -> Part.Shape:
+        r1, r2 = d1/2.0, d2/2.0
+        cone = Part.makeCone(r1, r2, l)
+        rot = App.Rotation(App.Vector(0,1,0), 90) if axis == 'x' else App.Rotation()
+        cone.Placement = App.Placement(App.Vector(cx - l/2.0 if axis == 'x' else cx,
+                                                cy, cz), rot)
+        return cone
+
+    @staticmethod
+    def create_hexagon(radius: float, height: float, center: Tuple[float, float, float] = (0,0,0)) -> Part.Shape:
+        points = []
+        for i in range(6):
+            angle = math.radians(60 * i)
+            x = center[0] + radius * math.cos(angle)
+            y = center[1] + radius * math.sin(angle)
+            points.append(App.Vector(x, y, center[2]))
+        points.append(points[0])
+        wire = Part.makePolygon(points)
+        face = Part.Face(wire)
+        return face.extrude(App.Vector(0, 0, height))
+
+    @staticmethod
+    def fillet_shape(shape: Part.Shape, radius: float) -> Part.Shape:
+        try:
+            edges = [e for e in shape.Edges if radius < e.Length < 15000]
+            return shape.makeFillet(radius, edges)
+        except Exception as e:
+            print(f"Filleteado fallido: {e}")
+            return shape
+
+class SpaceshipComponent:
+    def __init__(self, name: str, material: str = 'TITANIUM'):
+        self.name = name
+        self.shape: Optional[Part.Shape] = None
+        self.material = material
+        self.subcomponents: List['SpaceshipComponent'] = []
+
+    def build(self) -> Part.Shape:
+        pass
+
+    def add_subcomponent(self, component: 'SpaceshipComponent'):
+        self.subcomponents.append(component)
+
+    def get_total_mass(self) -> float:
+        if not self.shape:
+            return 0.0
+        volume = self.shape.Volume / 1e9  # Convertir mm³ a m³
+        density = MATERIALS.get(self.material, {}).get('rho', 1000.0)
+        mass = volume * density
+        for sub in self.subcomponents:
+            mass += sub.get_total_mass()
+        return mass
+
+    def add_to_document(self) -> App.DocumentObject:
+        if not self.shape:
+            self.build()
+        obj = doc.addObject("Part::Feature", self.name)
+        obj.Shape = self.shape
+        if self.material in MATERIALS:
+            obj.ViewObject.ShapeColor = MATERIALS[self.material]['color']
+        return obj
+
+# ========================
+# Componentes Principales
+# ========================
+
+class ShuttleHull(SpaceshipComponent):
+    def __init__(self):
+        super().__init__("Shuttle_Hull", "CARBON_FIBER")
+
+    def build(self) -> Part.Shape:
+        # Nariz aerodinámica del Shuttle
+        nose_radii = [P["nose_base_w"]/2.0, P["fuselage_width"]/2.0 * 0.8, P["fuselage_width"]/2.0 * 0.5, P["nose_cap_w"]/2.0]
+        nose_xpos = [0, P["nose_length"]*0.3, P["nose_length"]*0.7, P["nose_length"]]
+        nose_sections = [Part.makeCircle(r, App.Vector(x,0,0), App.Vector(1,0,0)) for r,x in zip(nose_radii,nose_xpos)]
+        nose = Part.makeLoft(nose_sections, True)
+
+        # Fuselaje principal con bahía de carga (payload bay)
+        fuselage_outer = Part.makeBox(P["total_length"] - P["nose_length"], P["fuselage_width"], P["fuselage_height"])
+        fuselage_outer.Placement = App.Placement(App.Vector(P["nose_length"], -P["fuselage_width"]/2.0, -P["fuselage_height"]/2.0), App.Rotation())
+
+        # Bahía de carga interna (hueca)
+        cargo_bay_outer = Part.makeBox(P["cargo_bay_length"], P["cargo_bay_width"], P["cargo_bay_height"])
+        cargo_bay_outer.Placement = App.Placement(App.Vector(P["nose_length"] + 2000, -P["cargo_bay_width"]/2.0, -P["cargo_bay_height"]/2.0), App.Rotation())
+        cargo_bay_inner = Part.makeBox(P["cargo_bay_length"] - P["hull_wall_t"]*2, P["cargo_bay_width"] - P["hull_wall_t"]*2, P["cargo_bay_height"] - P["hull_wall_t"]*2)
+        cargo_bay_inner.Placement = App.Placement(App.Vector(P["nose_length"] + 2000 + P["hull_wall_t"], -P["cargo_bay_width"]/2.0 + P["hull_wall_t"], -P["cargo_bay_height"]/2.0 + P["hull_wall_t"]), App.Rotation())
+        cargo_bay = cargo_bay_outer.cut(cargo_bay_inner)
+
+        # Cola vertical
+        vertical_tail = Part.makeBox(P["vertical_tail_w"], P["vertical_tail_t"], P["vertical_tail_h"])
+        vertical_tail.Placement = App.Placement(App.Vector(P["total_length"] - P["vertical_tail_w"], -P["vertical_tail_t"]/2.0, 0), App.Rotation())
+
+        # Módulo de tripulación (crew compartment) - como Shuttle
+        crew_comp = Part.makeBox(P["crew_compartment_l"], P["crew_compartment_w"], P["crew_compartment_h"])
+        crew_comp.Placement = App.Placement(App.Vector(P["nose_length"] - P["crew_compartment_l"]/2.0, -P["crew_compartment_w"]/2.0, -P["crew_compartment_h"]/2.0), App.Rotation())
+
+        # Puertas de la bahía de carga
+        cargo_door_left = Part.makeBox(P["cargo_bay_length"], P["cargo_bay_doors_t"], P["cargo_bay_height"])
+        cargo_door_left.Placement = App.Placement(App.Vector(P["nose_length"] + 2000, P["cargo_bay_width"]/2.0, -P["cargo_bay_height"]/2.0), App.Rotation())
+        cargo_door_right = Part.makeBox(P["cargo_bay_length"], P["cargo_bay_doors_t"], P["cargo_bay_height"])
+        cargo_door_right.Placement = App.Placement(App.Vector(P["nose_length"] + 2000, -P["cargo_bay_width"]/2.0 - P["cargo_bay_doors_t"], -P["cargo_bay_height"]/2.0), App.Rotation())
+
+        hull = nose.fuse(fuselage_outer).fuse(cargo_bay).fuse(vertical_tail).fuse(crew_comp).fuse(cargo_door_left).fuse(cargo_door_right)
+        self.shape = ComponentFactory.fillet_shape(hull, P["fillet_r"])
+        return self.shape
+
+class AdvancedThermalProtection(SpaceshipComponent):
+    def __init__(self):
+        super().__init__("Advanced_TPS", "CARBON_CARBON")
+
+    def build(self) -> Part.Shape:
+        # TPS hexagonal frontal (de SistemaPropulsionCilindrico)
+        tps_hex = ComponentFactory.create_hexagon(P["hex_diameter"]/2.0 + P["tps_thickness"], P["tps_thickness"],
+                                                (P["nose_len"] - P["tps_thickness"]/2.0, 0, 0))
+        inner_cut = ComponentFactory.create_hexagon(P["hex_diameter"]/2.0, P["tps_thickness"] + 10,
+                                                  (P["nose_len"] - P["tps_thickness"]/2.0 - 5, 0, 0))
+        tps_front = tps_hex.cut(inner_cut)
+
+        # TPS lateral (de TankBlackRadiation)
+        tps_side = ComponentFactory.create_cylinder(P["hull_outer_d"] + P["tps_thickness"]*2, P["total_length"],
+                                                  cx=P["total_length"]/2.0)
+        tps_inner = ComponentFactory.create_cylinder(P["hull_outer_d"], P["total_length"] + 100,
+                                                   cx=P["total_length"]/2.0)
+        tps_side = tps_side.cut(tps_inner)
+
+        self.shape = tps_front.fuse(tps_side)
+        return self.shape
+
+class MultiLayerRadiationShield(SpaceshipComponent):
+    def __init__(self):
+        super().__init__("MultiLayer_Radiation_Shield", "LEAD")
+
+    def build(self) -> Part.Shape:
+        layers = []
+        for i in range(min(P["rad_shield_layers"], len(P["rad_materials"]))):
+            layer_r = P["hull_outer_d"]/2.0 + (i+1) * P["rad_layer_t"] * 2
+            layer = ComponentFactory.create_cylinder(layer_r * 2, P["total_length"], cx=P["total_length"]/2.0)
+            inner_r = layer_r - P["rad_layer_t"] * 2
+            inner_cut = ComponentFactory.create_cylinder(inner_r * 2, P["total_length"] + 200, cx=P["total_length"]/2.0)
+            layer = layer.cut(inner_cut)
+            layers.append(layer)
+
+        if layers:
+            self.shape = layers[0]
+            for l in layers[1:]:
+                self.shape = self.shape.fuse(l)
+        return self.shape
+
+class OMSPropulsionSystem(SpaceshipComponent):
+    def __init__(self):
+        super().__init__("OMS_Propulsion_System", "TITANIUM")
+
+    def build(self) -> Part.Shape:
+        components = []
+
+        # Pods OMS (como en el Shuttle real)
+        for side in [1, -1]:
+            oms_pod = ComponentFactory.create_cylinder(P["oms_pod_d"], P["oms_pod_l"],
+                                                     cx=P["total_length"] - 4000,
+                                                     cy=side * (P["fuselage_width"]/2.0 + P["oms_pod_d"]/2.0 + 200),
+                                                     cz=0, axis='x')
+            components.append(oms_pod)
+
+        # Motores OMS
+        for side in [1, -1]:
+            oms_engine = ComponentFactory.create_cone(P["oms_engine_d"], P["oms_engine_d"]*0.6, P["oms_engine_l"],
+                                                    cx=P["total_length"] - 4000 + P["oms_pod_l"],
+                                                    cy=side * (P["fuselage_width"]/2.0 + P["oms_pod_d"]/2.0 + 200),
+                                                    cz=0, axis='x')
+            components.append(oms_engine)
+
+        # Tanques de hidrógeno para OMS
+        for i in range(P["hydrogen_tank_n"]):
+            tank = ComponentFactory.create_cylinder(P["hydrogen_tank_d"], P["hydrogen_tank_l"],
+                                                  cx=P["nose_length"] + P["crew_compartment_l"] + 500 + i * 1000,
+                                                  cy=P["fuselage_width"]/3.0, cz=0, axis='y')
+            components.append(tank)
+
+        # Tanques de oxígeno para OMS
+        for i in range(P["oxygen_tank_n"]):
+            tank = ComponentFactory.create_cylinder(P["oxygen_tank_d"], P["oxygen_tank_l"],
+                                                  cx=P["nose_length"] + P["crew_compartment_l"] + 500 + i * 1000,
+                                                  cy=-P["fuselage_width"]/3.0, cz=0, axis='y')
+            components.append(tank)
+
+        # Sistema RCS (Reaction Control System) - 44 thrusters como Shuttle
+        rcs_positions = [
+            # Thrusters frontales
+            (P["nose_length"] + 1000, P["fuselage_width"]/2.0 + 300, P["fuselage_height"]/2.0 + 200),
+            (P["nose_length"] + 1000, -P["fuselage_width"]/2.0 - 300, P["fuselage_height"]/2.0 + 200),
+            (P["nose_length"] + 1000, P["fuselage_width"]/2.0 + 300, -P["fuselage_height"]/2.0 - 200),
+            (P["nose_length"] + 1000, -P["fuselage_width"]/2.0 - 300, -P["fuselage_height"]/2.0 - 200),
+            # Thrusters traseros
+            (P["total_length"] - 1000, P["fuselage_width"]/2.0 + 300, P["fuselage_height"]/2.0 + 200),
+            (P["total_length"] - 1000, -P["fuselage_width"]/2.0 - 300, P["fuselage_height"]/2.0 + 200),
+            (P["total_length"] - 1000, P["fuselage_width"]/2.0 + 300, -P["fuselage_height"]/2.0 - 200),
+            (P["total_length"] - 1000, -P["fuselage_width"]/2.0 - 300, -P["fuselage_height"]/2.0 - 200),
+        ]
+
+        for pos in rcs_positions:
+            thruster = ComponentFactory.create_cylinder(P["rcs_thruster_d"], P["rcs_thruster_l"],
+                                                      cx=pos[0], cy=pos[1], cz=pos[2], axis='x')
+            components.append(thruster)
+
+        # Más thrusters en lados
+        for i in range(14):  # Thrusters laterales
+            angle = i * (360.0 / 14)
+            x = P["nose_length"] + P["crew_compartment_l"] + 2000
+            y = P["fuselage_width"]/2.0 * math.cos(math.radians(angle))
+            z = P["fuselage_height"]/2.0 * math.sin(math.radians(angle))
+            thruster = ComponentFactory.create_cylinder(P["rcs_thruster_d"], P["rcs_thruster_l"],
+                                                      cx=x, cy=y, cz=z, axis='x')
+            components.append(thruster)
+
+        if components:
+            self.shape = components[0]
+            for comp in components[1:]:
+                self.shape = self.shape.fuse(comp)
+        return self.shape
+
+class ShuttleControlSurfaces(SpaceshipComponent):
+    def __init__(self):
+        super().__init__("Shuttle_Control_Surfaces", "CARBON_FIBER")
+
+    def build(self) -> Part.Shape:
+        surfaces = []
+
+        # Alas delta (características principales del Shuttle)
+        for side in [1, -1]:
+            # Crear geometría delta wing
+            wing_points = [
+                App.Vector(P["nose_length"] + 2000, 0, 0),  # Punta delantera
+                App.Vector(P["nose_length"] + 2000 + P["delta_wing_leading_edge"], side * P["delta_wing_span"]/2.0, 0),  # Punta del borde de ataque
+                App.Vector(P["nose_length"] + 2000 + P["delta_wing_leading_edge"] + P["delta_wing_trailing_edge"], side * P["delta_wing_span"]/4.0, 0),  # Punta del borde de fuga
+                App.Vector(P["nose_length"] + 2000 + P["delta_wing_trailing_edge"], 0, 0),  # Punta trasera
+            ]
+            wing_wire = Part.makePolygon(wing_points)
+            wing_face = Part.Face(wing_wire)
+            wing = wing_face.extrude(App.Vector(0, 0, P["delta_wing_t"]))
+            surfaces.append(wing)
+
+        # Ailerons (en las alas)
+        for side in [1, -1]:
+            aileron = Part.makeBox(P["aileron_chord"], P["aileron_span"], P["delta_wing_t"] + 50)
+            aileron.Placement = App.Placement(App.Vector(P["nose_length"] + 2000 + P["delta_wing_leading_edge"] * 0.7,
+                                                       side * (P["delta_wing_span"]/2.0 - P["aileron_span"]/2.0),
+                                                       P["delta_wing_t"]), App.Rotation())
+            surfaces.append(aileron)
+
+        # Elevons (en los bordes de fuga)
+        for side in [1, -1]:
+            elevon = Part.makeBox(P["elevon_chord"], P["elevon_span"], P["delta_wing_t"] + 50)
+            elevon.Placement = App.Placement(App.Vector(P["nose_length"] + 2000 + P["delta_wing_leading_edge"] + P["delta_wing_trailing_edge"] * 0.6,
+                                                      side * (P["delta_wing_span"]/4.0 - P["elevon_span"]/2.0),
+                                                      P["delta_wing_t"]), App.Rotation())
+            surfaces.append(elevon)
+
+        # Timón (rudder) en la cola vertical
+        rudder = Part.makeBox(P["rudder_w"], P["vertical_tail_t"] + 50, P["rudder_h"])
+        rudder.Placement = App.Placement(App.Vector(P["total_length"] - P["rudder_w"], -P["vertical_tail_t"]/2.0 - 25, P["vertical_tail_h"] - P["rudder_h"]), App.Rotation())
+        surfaces.append(rudder)
+
+        # Body flap (flap del cuerpo para control hipersónico)
+        body_flap = Part.makeBox(2000, P["fuselage_width"], 100)
+        body_flap.Placement = App.Placement(App.Vector(P["total_length"] - 3000, -P["fuselage_width"]/2.0, -P["fuselage_height"]/2.0 - 100), App.Rotation())
+        surfaces.append(body_flap)
+
+        if surfaces:
+            self.shape = surfaces[0]
+            for surf in surfaces[1:]:
+                self.shape = self.shape.fuse(surf)
+        return self.shape
+
+class PowerAndCommunicationSystems(SpaceshipComponent):
+    def __init__(self):
+        super().__init__("Power_Communication_Systems", "CARBON_FIBER")
+
+    def build(self) -> Part.Shape:
+        systems = []
+
+        # Paneles solares desplegables
+        for i in range(P["solar_n"]):
+            side = 1 if i % 2 == 0 else -1
+            panel = Part.makeBox(P["solar_panel_l"], P["solar_panel_w"], P["solar_panel_t"])
+            panel.Placement = App.Placement(App.Vector(P["nose_length"] + P["crew_compartment_l"] + 5000 + i*1000,
+                                                     side * (P["fuselage_width"]/2.0 + P["solar_panel_w"]/2.0 + 200),
+                                                     P["fuselage_height"]/2.0 + 500), App.Rotation())
+            systems.append(panel)
+
+        # Celdas de combustible (fuel cells) para energía eléctrica
+        for i in range(P["fuel_cell_n"]):
+            fuel_cell = ComponentFactory.create_cylinder(P["fuel_cell_d"], P["fuel_cell_l"],
+                                                       cx=P["nose_length"] + P["crew_compartment_l"] + 3000 + i * 1000,
+                                                       cy=P["fuselage_width"]/2.0 - 500,
+                                                       cz=-P["fuselage_height"]/2.0 + P["fuel_cell_d"]/2.0, axis='y')
+            systems.append(fuel_cell)
+
+        # Antenas de comunicaciones
+        # Antena parabólica principal
+        dish = Part.makeSphere(P["antenna_dish_r"])
+        dish.Placement = App.Placement(App.Vector(P["nose_length"] + P["crew_compartment_l"] + P["antenna_dish_t"]/2.0,
+                                                P["fuselage_width"]/2.0 + 600, P["fuselage_height"]/2.0 + 300), App.Rotation(App.Vector(0,1,0), 90))
+        try:
+            dish.Scale = App.Vector(1, 1, 0.3)
+        except:
+            pass
+        systems.append(dish)
+
+        # Antena Ku-band
+        ku_antenna = ComponentFactory.create_cylinder(P["ku_band_antenna_r"]*2, P["ku_band_antenna_t"],
+                                                    cx=P["nose_length"] + P["crew_compartment_l"] + P["ku_band_antenna_t"]/2.0,
+                                                    cy=-P["fuselage_width"]/2.0 - 600, cz=P["fuselage_height"]/2.0 + 300, axis='x')
+        systems.append(ku_antenna)
+
+        if systems:
+            self.shape = systems[0]
+            for sys in systems[1:]:
+                self.shape = self.shape.fuse(sys)
+        return self.shape
+
+class ScientificPayload(SpaceshipComponent):
+    def __init__(self):
+        super().__init__("Scientific_Payload", "TITANIUM")
+
+    def build(self) -> Part.Shape:
+        instruments = []
+
+        # Magnetómetro en boom extendido
+        mag_boom = ComponentFactory.create_cylinder(P["magnetometer_boom_r"]*2, P["magnetometer_boom_l"],
+                                                  cx=P["nose_length"] + P["crew_compartment_l"] + P["magnetometer_boom_l"]/2.0,
+                                                  cy=P["fuselage_width"]/2.0 + 800, cz=0, axis='x')
+        instruments.append(mag_boom)
+
+        # Detector de partículas
+        particle_det = ComponentFactory.create_cylinder(P["particle_detector_d"], P["particle_detector_l"],
+                                                      cx=P["nose_length"] + P["crew_compartment_l"] + P["particle_detector_l"]/2.0,
+                                                      cy=-P["fuselage_width"]/2.0 - 800, cz=0, axis='x')
+        instruments.append(particle_det)
+
+        # Booms científicos extendidos
+        for side in [1, -1]:
+            boom = ComponentFactory.create_cylinder(P["science_boom_r"]*2, P["science_boom_l"],
+                                                  cx=P["nose_length"] + P["crew_compartment_l"]/2.0,
+                                                  cy=side * (P["fuselage_width"]/2.0 + 1000),
+                                                  cz=P["fuselage_height"]/2.0 + P["science_boom_l"]/2.0, axis='y')
+            instruments.append(boom)
+
+        if instruments:
+            self.shape = instruments[0]
+            for inst in instruments[1:]:
+                self.shape = self.shape.fuse(inst)
+        return self.shape
+
+class DockingSystem(SpaceshipComponent):
+    def __init__(self):
+        super().__init__("Docking_System", "TITANIUM")
+
+    def build(self) -> Part.Shape:
+        # Sistema de acoplamiento para estaciones espaciales (como APAS-95)
+        docking_port = ComponentFactory.create_cylinder(P["docking_system_d"], P["docking_system_l"],
+                                                      cx=P["nose_length"] + P["crew_compartment_l"] + P["docking_system_l"]/2.0,
+                                                      cy=0, cz=P["fuselage_height"]/2.0 + P["docking_system_d"]/2.0, axis='x')
+
+        # Anillos de guía
+        guide_ring_outer = ComponentFactory.create_cylinder(P["docking_system_d"] + 200, 50,
+                                                          cx=P["nose_length"] + P["crew_compartment_l"] + P["docking_system_l"] + 25,
+                                                          cy=0, cz=P["fuselage_height"]/2.0 + P["docking_system_d"]/2.0, axis='x')
+        guide_ring_inner = ComponentFactory.create_cylinder(P["docking_system_d"] - 100, 60,
+                                                          cx=P["nose_length"] + P["crew_compartment_l"] + P["docking_system_l"] + 20,
+                                                          cy=0, cz=P["fuselage_height"]/2.0 + P["docking_system_d"]/2.0, axis='x')
+        guide_ring = guide_ring_outer.cut(guide_ring_inner)
+
+        self.shape = docking_port.fuse(guide_ring)
+        return self.shape
+
+class LifeSupportSystem(SpaceshipComponent):
+    def __init__(self):
+        super().__init__("Life_Support_System", "TITANIUM")
+
+    def build(self) -> Part.Shape:
+        systems = []
+
+        # Sistema principal de soporte vital
+        life_support_unit = ComponentFactory.create_cylinder(P["life_support_d"], P["life_support_l"],
+                                                           cx=P["nose_length"] + P["crew_compartment_l"] - 1000,
+                                                           cy=P["fuselage_width"]/2.0 - P["life_support_d"]/2.0 - 100,
+                                                           cz=-P["fuselage_height"]/2.0 + P["life_support_d"]/2.0, axis='y')
+        systems.append(life_support_unit)
+
+        # Tanques de oxígeno de emergencia
+        for i in range(P["emergency_oxygen_n"]):
+            emergency_tank = ComponentFactory.create_cylinder(P["emergency_oxygen_d"], P["emergency_oxygen_l"],
+                                                            cx=P["nose_length"] + 500 + i * 300,
+                                                            cy=P["fuselage_width"]/2.0 - 200,
+                                                            cz=P["fuselage_height"]/2.0 - 200, axis='y')
+            systems.append(emergency_tank)
+
+        # Celdas de combustible (fuel cells) para energía
+        for i in range(P["fuel_cell_n"]):
+            fuel_cell = ComponentFactory.create_cylinder(P["fuel_cell_d"], P["fuel_cell_l"],
+                                                       cx=P["nose_length"] + P["crew_compartment_l"] + 1000 + i * 800,
+                                                       cy=-P["fuselage_width"]/2.0 + P["fuel_cell_d"]/2.0 + 100,
+                                                       cz=-P["fuselage_height"]/2.0 + P["fuel_cell_d"]/2.0, axis='y')
+            systems.append(fuel_cell)
+
+        if systems:
+            self.shape = systems[0]
+            for sys in systems[1:]:
+                self.shape = self.shape.fuse(sys)
+        return self.shape
+
+class PayloadAttachmentSystem(SpaceshipComponent):
+    def __init__(self):
+        super().__init__("Payload_Attachment_System", "STEEL")
+
+    def build(self) -> Part.Shape:
+        attachments = []
+
+        # Puntos de anclaje en la bahía de carga (como Shuttle)
+        attachment_positions = [
+            (P["nose_length"] + 3000, 0, 0),
+            (P["nose_length"] + 6000, P["cargo_bay_width"]/3.0, 0),
+            (P["nose_length"] + 6000, -P["cargo_bay_width"]/3.0, 0),
+            (P["nose_length"] + 9000, P["cargo_bay_width"]/4.0, P["cargo_bay_height"]/4.0),
+            (P["nose_length"] + 9000, -P["cargo_bay_width"]/4.0, P["cargo_bay_height"]/4.0),
+            (P["nose_length"] + 12000, 0, P["cargo_bay_height"]/3.0),
+        ]
+
+        for pos in attachment_positions:
+            attachment_point = ComponentFactory.create_cylinder(200, 300, cx=pos[0], cy=pos[1], cz=pos[2], axis='y')
+            attachments.append(attachment_point)
+
+        # Sistema de liberación pirotécnica (simulado)
+        for pos in attachment_positions[:4]:  # Solo algunos puntos
+            release_mechanism = ComponentFactory.create_cylinder(100, 150, cx=pos[0], cy=pos[1] + 150, cz=pos[2], axis='y')
+            attachments.append(release_mechanism)
+
+        if attachments:
+            self.shape = attachments[0]
+            for att in attachments[1:]:
+                self.shape = self.shape.fuse(att)
+        return self.shape
+
+class ShuttleLandingSystem(SpaceshipComponent):
+    def __init__(self):
+        super().__init__("Shuttle_Landing_System", "TITANIUM")
+
+    def build(self) -> Part.Shape:
+        landing_parts = []
+
+        # Tren principal (main gear) - 2 unidades como Shuttle
+        for side in [1, -1]:
+            main_strut = ComponentFactory.create_cylinder(P["main_gear_strut_d"], P["main_gear_strut_l"],
+                                                        cx=P["nose_length"] + P["crew_compartment_l"] + 2000,
+                                                        cy=side * P["fuselage_width"]/3.0,
+                                                        cz=-P["fuselage_height"]/2.0 - P["main_gear_strut_l"]/2.0, axis='y')
+            main_wheel = ComponentFactory.create_cylinder(P["landing_gear_wheel_d"], P["landing_gear_wheel_w"],
+                                                        cx=P["nose_length"] + P["crew_compartment_l"] + 2000,
+                                                        cy=side * P["fuselage_width"]/3.0,
+                                                        cz=-P["fuselage_height"]/2.0 - P["main_gear_strut_l"] - P["landing_gear_wheel_w"]/2.0, axis='y')
+            landing_parts.append(main_strut.fuse(main_wheel))
+
+        # Tren de nariz (nose gear) - 1 unidad
+        nose_strut = ComponentFactory.create_cylinder(P["nose_gear_strut_d"], P["nose_gear_strut_l"],
+                                                    cx=P["nose_length"] + 1000,
+                                                    cy=0,
+                                                    cz=-P["fuselage_height"]/2.0 - P["nose_gear_strut_l"]/2.0, axis='y')
+        nose_wheel = ComponentFactory.create_cylinder(P["landing_gear_wheel_d"] * 0.8, P["landing_gear_wheel_w"],
+                                                    cx=P["nose_length"] + 1000,
+                                                    cy=0,
+                                                    cz=-P["fuselage_height"]/2.0 - P["nose_gear_strut_l"] - P["landing_gear_wheel_w"]/2.0, axis='y')
+        landing_parts.append(nose_strut.fuse(nose_wheel))
+
+        if landing_parts:
+            self.shape = landing_parts[0]
+            for part in landing_parts[1:]:
+                self.shape = self.shape.fuse(part)
+        return self.shape
+
+# ========================
+# Función Principal Unificada
+# ========================
+def build_space_shuttle_type_spaceship():
+    """Construir la nave espacial unificada completa"""
+
+    print("Iniciando construcción de nave espacial tipo Space Shuttle para misiones críticas...")
+
+    # Crear componentes principales
+    hull = ShuttleHull()
+    hull_obj = hull.add_to_document()
+
+    tps = AdvancedThermalProtection()
+    tps_obj = tps.add_to_document()
+
+    radiation_shield = MultiLayerRadiationShield()
+    rad_obj = radiation_shield.add_to_document()
+
+    propulsion = OMSPropulsionSystem()
+    prop_obj = propulsion.add_to_document()
+
+    control_surfaces = ShuttleControlSurfaces()
+    ctrl_obj = control_surfaces.add_to_document()
+
+    power_comm = PowerAndCommunicationSystems()
+    power_obj = power_comm.add_to_document()
+
+    science = ScientificPayload()
+    sci_obj = science.add_to_document()
+
+    docking = DockingSystem()
+    dock_obj = docking.add_to_document()
+
+    life_support = LifeSupportSystem()
+    life_obj = life_support.add_to_document()
+
+    payload_attach = PayloadAttachmentSystem()
+    payload_obj = payload_attach.add_to_document()
+
+    landing = ShuttleLandingSystem()
+    land_obj = landing.add_to_document()
+
+    # Calcular masa total aproximada
+    total_mass = (hull.get_total_mass() + tps.get_total_mass() + radiation_shield.get_total_mass() +
+                  propulsion.get_total_mass() + control_surfaces.get_total_mass() +
+                  power_comm.get_total_mass() + science.get_total_mass() + docking.get_total_mass() +
+                  life_support.get_total_mass() + payload_attach.get_total_mass() + landing.get_total_mass())
+
+    print(f"Masa total aproximada: {total_mass:.2f} kg")
+    # Fusionar componentes principales para objeto final
+    main_components = [hull_obj, tps_obj, rad_obj, prop_obj, ctrl_obj, power_obj, sci_obj, dock_obj, life_obj, payload_obj, land_obj]
+    fused_shape = main_components[0].Shape
+    for comp in main_components[1:]:
+        if comp and hasattr(comp, 'Shape'):
+            try:
+                fused_shape = fused_shape.fuse(comp.Shape)
+                print(f"Fusionado: {comp.Name}")
+            except Exception as e:
+                print(f"Error fusionando {comp.Name}: {e}")
+
+    # Crear objeto final
+    final_obj = doc.addObject("Part::Feature", "Space_Shuttle_Type_Spaceship")
+    final_obj.Shape = fused_shape
+    final_obj.ViewObject.ShapeColor = (0.6, 0.6, 0.7)  # Color general
+    final_obj.ViewObject.DisplayMode = "Shaded"
+
+    # Añadir propiedades personalizadas
+    final_obj.addProperty("App::PropertyFloat", "TotalMass", "Spacecraft", "Masa total aproximada (kg)")
+    final_obj.TotalMass = total_mass
+
+    final_obj.addProperty("App::PropertyString", "PropulsionType", "Spacecraft", "Tipo de propulsión")
+    final_obj.PropulsionType = CONFIG.propulsion_type
+
+    final_obj.addProperty("App::PropertyBool", "AerodynamicMode", "Spacecraft", "Modo aerodinámico habilitado")
+    final_obj.AerodynamicMode = CONFIG.enable_aerodynamic_mode
+
+    # Recomputar
+    doc.recompute()
+
+    try:
+        Gui.ActiveDocument.ActiveView.viewAxonometric()
+        Gui.SendMsgToActiveView("ViewFit")
+    except:
+        pass
+
+    print("Nave espacial tipo Space Shuttle completada: diseño realista para misiones críticas a estaciones espaciales.")
+    print("Características: forma aerodinámica tipo Shuttle con alas delta, bahía de carga masiva,")
+    print("blindaje de radiación multi-capa extrema para misiones críticas, propulsión OMS hidrógeno/oxígeno,")
+    print("superficies de control (ailerons, elevons, rudder), sistema de acoplamiento APAS-95,")
+    print("sistemas de soporte vital y emergencia, puntos de anclaje para carga útil,")
+    print("tren de aterrizaje tipo Shuttle, optimizada para re-entrada atmosférica y operaciones orbitales.")
+
+# Ejecutar construcción
+if __name__ == "__main__":
+    build_space_shuttle_type_spaceship()

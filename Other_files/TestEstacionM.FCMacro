@@ -1,0 +1,945 @@
+# -*- coding: utf-8 -*-
+# Macro FreeCAD: Estación Espacial Modular ISS-like - Arquitectura para Misiones de Larga Duración
+# Estación completa modular con truss central, módulos presurizados, paneles solares masivos, brazos robóticos
+# Autor: AI Assistant - Versión Estación Espacial Modular
+# Unidades: mm, eje longitudinal = X
+
+import FreeCAD as App, FreeCADGui as Gui, Part, math
+from typing import Dict, List, Optional, Tuple
+
+# ========================
+# Configuración Avanzada - Estación Espacial Modular ISS-like
+# ========================
+class SpaceStationConfig:
+    def __init__(self):
+        self.scale_factor = 1.0
+        self.enable_3d_printing_supports = True
+        self.enable_modular_design = True
+        self.radiation_shield_layers = 8  # Capas extremas para misiones de larga duración
+        self.power_system = "SOLAR_ARRAY"  # SOLAR_ARRAY, NUCLEAR, HYBRID
+        self.habitation_capacity = 12  # Capacidad de tripulación
+        self.mission_type = "ORBITAL_STATION"  # ORBITAL_STATION, LUNAR_OUTPOST, DEEP_SPACE
+        self.enable_emergency_systems = True
+        self.enable_robotic_arms = True
+        self.modular_launch = True  # Diseño para lanzamiento en secciones
+
+    def get_scaled_param(self, param: float) -> float:
+        return param * self.scale_factor
+
+CONFIG = SpaceStationConfig()
+
+DOC_NAME = "Modular_Space_Station_ISS_Style"
+if App.ActiveDocument is None or App.ActiveDocument.Label != DOC_NAME:
+    App.newDocument(DOC_NAME)
+doc = App.ActiveDocument
+
+# ========================
+# Parámetros Unificados - Estación Espacial Modular ISS-like
+# ========================
+P = {
+    # Dimensiones generales de la estación (escala ISS)
+    "station_length": CONFIG.get_scaled_param(73000.0),  # Longitud total como ISS
+    "station_width": CONFIG.get_scaled_param(109000.0),  # Ancho con paneles solares extendidos
+    "station_height": CONFIG.get_scaled_param(20000.0),  # Altura máxima
+    "module_diameter": CONFIG.get_scaled_param(4200.0),  # Diámetro estándar de módulos presurizados
+    "module_wall_t": CONFIG.get_scaled_param(50.0),
+
+    # Estructura central (truss) como ISS
+    "truss_length": CONFIG.get_scaled_param(73000.0),
+    "truss_width": CONFIG.get_scaled_param(3500.0),
+    "truss_height": CONFIG.get_scaled_param(2000.0),
+    "truss_segments": 12,  # Segmentos modulares del truss
+
+    # Módulos presurizados principales
+    "habitation_module_l": CONFIG.get_scaled_param(9000.0), "habitation_module_n": 2,
+    "laboratory_module_l": CONFIG.get_scaled_param(11000.0), "laboratory_module_n": 3,
+    "airlock_module_l": CONFIG.get_scaled_param(5500.0), "airlock_module_n": 2,
+    "power_module_l": CONFIG.get_scaled_param(6000.0), "power_module_n": 2,
+
+    # Paneles solares masivos (como ISS)
+    "solar_array_length": CONFIG.get_scaled_param(35000.0),
+    "solar_array_width": CONFIG.get_scaled_param(12000.0),
+    "solar_array_thickness": CONFIG.get_scaled_param(15.0),
+    "solar_array_pairs": 4,  # Pares de paneles solares
+
+    # Puertos de acoplamiento múltiples
+    "docking_port_d": CONFIG.get_scaled_param(1200.0), "docking_port_l": CONFIG.get_scaled_param(800.0),
+    "docking_ports_n": 8,  # Múltiples puertos como ISS
+    "docking_port_types": ["APAS_95", "CBM", "SSVP"],
+
+    # Blindaje de radiación extrema para misiones de larga duración
+    "rad_shield_layers": CONFIG.radiation_shield_layers,
+    "rad_layer_t": CONFIG.get_scaled_param(100.0),
+    "rad_materials": ["LEAD", "TUNGSTEN", "BORON", "WATER", "CARBON", "POLYETHYLENE", "HYDROGEN_RICH", "LITHIUM_HYDRIDE"],
+
+    # Sistemas de propulsión para mantenimiento orbital
+    "rcs_thruster_d": CONFIG.get_scaled_param(200.0), "rcs_thruster_l": CONFIG.get_scaled_param(500.0), "rcs_thruster_n": 24,
+    "attitude_control_gyro_d": CONFIG.get_scaled_param(800.0), "attitude_control_gyro_l": CONFIG.get_scaled_param(1200.0), "attitude_control_n": 4,
+
+    # Sistemas de soporte vital avanzados
+    "life_support_module_d": CONFIG.get_scaled_param(1500.0), "life_support_module_l": CONFIG.get_scaled_param(3000.0),
+    "oxygen_generation_d": CONFIG.get_scaled_param(500.0), "oxygen_generation_l": CONFIG.get_scaled_param(1000.0), "oxygen_generation_n": 3,
+    "water_recycling_d": CONFIG.get_scaled_param(600.0), "water_recycling_l": CONFIG.get_scaled_param(1200.0), "water_recycling_n": 2,
+
+    # Energía y comunicaciones
+    "fuel_cell_n": 6, "fuel_cell_d": CONFIG.get_scaled_param(500.0), "fuel_cell_l": CONFIG.get_scaled_param(800.0),
+    "communication_antenna_r": CONFIG.get_scaled_param(800.0), "communication_antenna_t": CONFIG.get_scaled_param(30.0),
+    "tracking_antenna_r": CONFIG.get_scaled_param(400.0), "tracking_antenna_t": CONFIG.get_scaled_param(20.0),
+
+    # Brazo robótico (como Canadarm en ISS)
+    "robotic_arm_length": CONFIG.get_scaled_param(15000.0),
+    "robotic_arm_diameter": CONFIG.get_scaled_param(300.0),
+    "robotic_arm_segments": 6,
+
+    # Instrumentos científicos externos
+    "science_payload_boom_l": CONFIG.get_scaled_param(3000.0), "science_payload_boom_r": CONFIG.get_scaled_param(40.0),
+    "external_experiments_n": 12,
+    "meteoroid_detector_d": CONFIG.get_scaled_param(300.0), "meteoroid_detector_l": CONFIG.get_scaled_param(400.0),
+
+    # Detalles para impresión 3D y construcción modular
+    "min_wall_t": 3.0,
+    "fillet_r": CONFIG.get_scaled_param(75.0),
+    "modular_interface_d": CONFIG.get_scaled_param(1500.0),  # Interfaces para ensamblaje orbital
+    "launch_fairing_d": CONFIG.get_scaled_param(5000.0),  # Diámetro del fairing de lanzamiento
+}
+
+# Materiales Expandidos con Propiedades Avanzadas
+MATERIALS = {
+    'TITANIUM': {'name': 'Ti-6Al-4V', 'rho': 4430.0, 'color': (0.7, 0.7, 0.8), 'yield_strength': 880e6},
+    'CARBON_FIBER': {'name': 'Carbon Fiber Composite', 'rho': 1600.0, 'color': (0.2, 0.2, 0.2), 'yield_strength': 600e6},
+    'CARBON_CARBON': {'name': 'Carbon-Carbon TPS', 'rho': 1800.0, 'color': (0.1, 0.1, 0.1), 'thermal_resist': 3000.0},
+    'ABLATIVE': {'name': 'Ablative Material', 'rho': 1200.0, 'color': (0.8, 0.4, 0.0), 'thermal_resist': 2500.0},
+    'CERAMIC': {'name': 'Ceramic Insulation', 'rho': 2400.0, 'color': (0.9, 0.9, 0.8), 'thermal_resist': 2000.0},
+    'LEAD': {'name': 'Lead Shield', 'rho': 11340.0, 'color': (0.3, 0.3, 0.3), 'radiation_absorption': 0.95},
+    'TUNGSTEN': {'name': 'Tungsten', 'rho': 19300.0, 'color': (0.4, 0.4, 0.4), 'radiation_absorption': 0.98},
+    'BORON': {'name': 'Boron Carbide', 'rho': 2500.0, 'color': (0.1, 0.1, 0.1), 'neutron_absorption': 0.9},
+    'POLYETHYLENE': {'name': 'HDPE Radiation Shield', 'rho': 950.0, 'color': (0.8, 0.8, 0.9), 'neutron_absorption': 0.8},
+    'LIQUID_OXYGEN': {'name': 'LOX Tank', 'rho': 1140.0, 'color': (0.0, 0.5, 1.0), 'energy_density': 5.4},
+    'METHANE': {'name': 'Liquid Methane', 'rho': 420.0, 'color': (0.6, 0.8, 0.2), 'energy_density': 8.0},
+    'STEEL': {'name': 'Stainless Steel', 'rho': 8000.0, 'color': (0.6, 0.6, 0.6), 'yield_strength': 200e6},
+}
+
+# ========================
+# Clases y Funciones Avanzadas
+# ========================
+class ComponentFactory:
+    @staticmethod
+    def create_cylinder(d: float, l: float, cx: float = 0, cy: float = 0, cz: float = 0, axis: str = 'x') -> Part.Shape:
+        r = d / 2.0
+        cyl = Part.makeCylinder(r, l)
+        rot = App.Rotation(App.Vector(0,1,0), 90) if axis == 'x' else App.Rotation()
+        cyl.Placement = App.Placement(App.Vector(cx - l/2.0 if axis == 'x' else cx,
+                                                cy, cz), rot)
+        return cyl
+
+    @staticmethod
+    def create_cone(d1: float, d2: float, l: float, cx: float = 0, cy: float = 0, cz: float = 0, axis: str = 'x') -> Part.Shape:
+        r1, r2 = d1/2.0, d2/2.0
+        cone = Part.makeCone(r1, r2, l)
+        rot = App.Rotation(App.Vector(0,1,0), 90) if axis == 'x' else App.Rotation()
+        cone.Placement = App.Placement(App.Vector(cx - l/2.0 if axis == 'x' else cx,
+                                                cy, cz), rot)
+        return cone
+
+    @staticmethod
+    def create_hexagon(radius: float, height: float, center: Tuple[float, float, float] = (0,0,0)) -> Part.Shape:
+        points = []
+        for i in range(6):
+            angle = math.radians(60 * i)
+            x = center[0] + radius * math.cos(angle)
+            y = center[1] + radius * math.sin(angle)
+            points.append(App.Vector(x, y, center[2]))
+        points.append(points[0])
+        wire = Part.makePolygon(points)
+        face = Part.Face(wire)
+        return face.extrude(App.Vector(0, 0, height))
+
+    @staticmethod
+    def fillet_shape(shape: Part.Shape, radius: float) -> Part.Shape:
+        try:
+            edges = [e for e in shape.Edges if radius < e.Length < 15000]
+            return shape.makeFillet(radius, edges)
+        except Exception as e:
+            print(f"Filleteado fallido: {e}")
+            return shape
+
+class SpaceshipComponent:
+    def __init__(self, name: str, material: str = 'TITANIUM'):
+        self.name = name
+        self.shape: Optional[Part.Shape] = None
+        self.material = material
+        self.subcomponents: List['SpaceshipComponent'] = []
+
+    def build(self) -> Part.Shape:
+        pass
+
+    def add_subcomponent(self, component: 'SpaceshipComponent'):
+        self.subcomponents.append(component)
+
+    def get_total_mass(self) -> float:
+        if not self.shape:
+            return 0.0
+        volume = self.shape.Volume / 1e9  # Convertir mm³ a m³
+        density = MATERIALS.get(self.material, {}).get('rho', 1000.0)
+        mass = volume * density
+        for sub in self.subcomponents:
+            mass += sub.get_total_mass()
+        return mass
+
+    def add_to_document(self) -> App.DocumentObject:
+        if not self.shape:
+            self.build()
+        obj = doc.addObject("Part::Feature", self.name)
+        obj.Shape = self.shape
+        if self.material in MATERIALS:
+            obj.ViewObject.ShapeColor = MATERIALS[self.material]['color']
+        return obj
+
+# ========================
+# Componentes Principales
+# ========================
+
+class CentralTruss(SpaceshipComponent):
+    def __init__(self):
+        super().__init__("Central_Truss", "CARBON_FIBER")
+
+    def build(self) -> Part.Shape:
+        # Estructura central del truss (como ISS Integrated Truss Structure)
+        truss_main = Part.makeBox(P["truss_length"], P["truss_width"], P["truss_height"])
+        truss_main.Placement = App.Placement(App.Vector(-P["truss_length"]/2.0, -P["truss_width"]/2.0, -P["truss_height"]/2.0), App.Rotation())
+
+        # Segmentos modulares del truss
+        truss_segments = []
+        segment_length = P["truss_length"] / P["truss_segments"]
+        for i in range(P["truss_segments"]):
+            segment = Part.makeBox(segment_length - 100, P["truss_width"] - 200, P["truss_height"] - 200)
+            segment.Placement = App.Placement(App.Vector(-P["truss_length"]/2.0 + i * segment_length + 50,
+                                                       -P["truss_width"]/2.0 + 100,
+                                                       -P["truss_height"]/2.0 + 100), App.Rotation())
+            truss_segments.append(segment)
+
+        # Interfaces modulares para ensamblaje orbital
+        interfaces = []
+        for i in range(P["truss_segments"] - 1):
+            interface = ComponentFactory.create_cylinder(P["modular_interface_d"], P["truss_height"],
+                                                       cx=-P["truss_length"]/2.0 + (i + 1) * segment_length,
+                                                       cy=0, cz=0, axis='y')
+            interfaces.append(interface)
+
+        # Puntos de anclaje para módulos
+        attachment_points = []
+        for i in range(0, P["truss_segments"], 2):
+            point = ComponentFactory.create_cylinder(500, P["truss_height"] + 1000,
+                                                   cx=-P["truss_length"]/2.0 + i * segment_length + segment_length/2.0,
+                                                   cy=P["truss_width"]/2.0 + 500, cz=0, axis='y')
+            attachment_points.append(point)
+
+        # Construir truss completo
+        truss = truss_main
+        for segment in truss_segments:
+            truss = truss.fuse(segment)
+        for interface in interfaces:
+            truss = truss.fuse(interface)
+        for point in attachment_points:
+            truss = truss.fuse(point)
+
+        self.shape = ComponentFactory.fillet_shape(truss, P["fillet_r"])
+        return self.shape
+
+class HabitationModule(SpaceshipComponent):
+    def __init__(self, module_id: int = 1):
+        super().__init__(f"Habitation_Module_{module_id}", "TITANIUM")
+
+    def build(self) -> Part.Shape:
+        # Módulo de habitación presurizado (como Destiny en ISS)
+        module_outer = ComponentFactory.create_cylinder(P["module_diameter"], P["habitation_module_l"],
+                                                      cx=0, cy=0, cz=0, axis='x')
+        module_inner = ComponentFactory.create_cylinder(P["module_diameter"] - P["module_wall_t"]*2,
+                                                      P["habitation_module_l"] - P["module_wall_t"]*2,
+                                                      cx=0, cy=0, cz=0, axis='x')
+        module = module_outer.cut(module_inner)
+
+        # Puertas de acceso
+        hatch = ComponentFactory.create_cylinder(P["docking_port_d"], P["module_wall_t"] + 200,
+                                               cx=P["habitation_module_l"]/2.0, cy=0, cz=P["module_diameter"]/4.0, axis='x')
+
+        # Ventanas
+        windows = []
+        for i in range(6):
+            angle = i * 60
+            window = ComponentFactory.create_cylinder(400, P["module_wall_t"] + 100,
+                                                    cx=P["habitation_module_l"]*0.3 * math.cos(math.radians(angle)),
+                                                    cy=P["habitation_module_l"]*0.3 * math.sin(math.radians(angle)),
+                                                    cz=P["module_diameter"]/2.0, axis='z')
+            windows.append(window)
+
+        # Construir módulo completo
+        habitation = module.cut(hatch)
+        for window in windows:
+            habitation = habitation.fuse(window)
+
+        self.shape = ComponentFactory.fillet_shape(habitation, P["fillet_r"])
+        return self.shape
+
+class LaboratoryModule(SpaceshipComponent):
+    def __init__(self, module_id: int = 1):
+        super().__init__(f"Laboratory_Module_{module_id}", "CARBON_FIBER")
+
+    def build(self) -> Part.Shape:
+        # Módulo de laboratorio presurizado (como Columbus en ISS)
+        module_outer = ComponentFactory.create_cylinder(P["module_diameter"], P["laboratory_module_l"],
+                                                      cx=0, cy=0, cz=0, axis='x')
+        module_inner = ComponentFactory.create_cylinder(P["module_diameter"] - P["module_wall_t"]*2,
+                                                      P["laboratory_module_l"] - P["module_wall_t"]*2,
+                                                      cx=0, cy=0, cz=0, axis='x')
+        module = module_outer.cut(module_inner)
+
+        # Puertos de acoplamiento en extremos
+        docking_port_1 = ComponentFactory.create_cylinder(P["docking_port_d"], P["docking_port_l"],
+                                                        cx=-P["laboratory_module_l"]/2.0, cy=0, cz=0, axis='x')
+        docking_port_2 = ComponentFactory.create_cylinder(P["docking_port_d"], P["docking_port_l"],
+                                                        cx=P["laboratory_module_l"]/2.0, cy=0, cz=0, axis='x')
+
+        # Experimentos externos
+        external_racks = []
+        for i in range(4):
+            angle = i * 90
+            rack = Part.makeBox(1000, 500, 800)
+            rack.Placement = App.Placement(App.Vector(P["laboratory_module_l"]*0.2 * math.cos(math.radians(angle)),
+                                                     P["laboratory_module_l"]*0.2 * math.sin(math.radians(angle)),
+                                                     P["module_diameter"]/2.0), App.Rotation())
+            external_racks.append(rack)
+
+        # Construir módulo completo
+        laboratory = module.fuse(docking_port_1).fuse(docking_port_2)
+        for rack in external_racks:
+            laboratory = laboratory.fuse(rack)
+
+        self.shape = ComponentFactory.fillet_shape(laboratory, P["fillet_r"])
+        return self.shape
+
+class SolarArray(SpaceshipComponent):
+    def __init__(self, array_id: int = 1):
+        super().__init__(f"Solar_Array_{array_id}", "CARBON_FIBER")
+
+    def build(self) -> Part.Shape:
+        # Panel solar masivo (como en ISS)
+        array_main = Part.makeBox(P["solar_array_length"], P["solar_array_width"], P["solar_array_thickness"])
+        array_main.Placement = App.Placement(App.Vector(-P["solar_array_length"]/2.0,
+                                                      -P["solar_array_width"]/2.0,
+                                                      -P["solar_array_thickness"]/2.0), App.Rotation())
+
+        # Estructura de soporte
+        support_beams = []
+        for i in range(5):
+            beam = Part.makeBox(P["solar_array_length"], 100, 200)
+            beam.Placement = App.Placement(App.Vector(-P["solar_array_length"]/2.0,
+                                                     -P["solar_array_width"]/2.0 + i * P["solar_array_width"]/4.0,
+                                                     -100), App.Rotation())
+            support_beams.append(beam)
+
+        # Mástil de despliegue
+        mast = ComponentFactory.create_cylinder(200, P["solar_array_width"] + 2000,
+                                              cx=0, cy=0, cz=P["solar_array_thickness"]/2.0 + 1000, axis='z')
+
+        # Construir array completo
+        solar_array = array_main.fuse(mast)
+        for beam in support_beams:
+            solar_array = solar_array.fuse(beam)
+
+        self.shape = ComponentFactory.fillet_shape(solar_array, P["fillet_r"])
+        return self.shape
+
+class RoboticArm(SpaceshipComponent):
+    def __init__(self):
+        super().__init__("Robotic_Arm", "STEEL")
+
+    def build(self) -> Part.Shape:
+        # Brazo robótico (como Canadarm en ISS)
+        arm_segments = []
+
+        # Segmento base
+        base_segment = ComponentFactory.create_cylinder(P["robotic_arm_diameter"], P["robotic_arm_length"]/P["robotic_arm_segments"],
+                                                      cx=0, cy=0, cz=0, axis='x')
+
+        # Segmentos articulados
+        for i in range(1, P["robotic_arm_segments"]):
+            segment = ComponentFactory.create_cylinder(P["robotic_arm_diameter"] * 0.9**i,
+                                                     P["robotic_arm_length"]/P["robotic_arm_segments"],
+                                                     cx=i * P["robotic_arm_length"]/P["robotic_arm_segments"],
+                                                     cy=0, cz=0, axis='x')
+            arm_segments.append(segment)
+
+        # Pinza final
+        end_effector = Part.makeBox(500, 300, 200)
+        end_effector.Placement = App.Placement(App.Vector(P["robotic_arm_length"] + 250, -150, -100), App.Rotation())
+
+        # Construir brazo completo
+        robotic_arm = base_segment.fuse(end_effector)
+        for segment in arm_segments:
+            robotic_arm = robotic_arm.fuse(segment)
+
+        self.shape = ComponentFactory.fillet_shape(robotic_arm, P["fillet_r"])
+        return self.shape
+
+class MultipleDockingPorts(SpaceshipComponent):
+    def __init__(self):
+        super().__init__("Multiple_Docking_Ports", "TITANIUM")
+
+    def build(self) -> Part.Shape:
+        docking_ports = []
+
+        # Puertos de acoplamiento distribuidos (como ISS)
+        port_positions = [
+            (P["truss_length"]*0.1, P["truss_width"]/2.0 + 500, 0),  # Puerto frontal
+            (-P["truss_length"]*0.1, P["truss_width"]/2.0 + 500, 0),  # Puerto trasero
+            (0, P["truss_width"]/2.0 + 500, P["truss_height"]/2.0 + 500),  # Puerto superior
+            (P["truss_length"]*0.3, -P["truss_width"]/2.0 - 500, 0),  # Puerto lateral derecho
+            (-P["truss_length"]*0.3, -P["truss_width"]/2.0 - 500, 0),  # Puerto lateral izquierdo
+        ]
+
+        for i, pos in enumerate(port_positions):
+            port_type = P["docking_port_types"][i % len(P["docking_port_types"])]
+
+            # Puerto principal
+            main_port = ComponentFactory.create_cylinder(P["docking_port_d"], P["docking_port_l"],
+                                                       cx=pos[0], cy=pos[1], cz=pos[2], axis='y')
+
+            # Anillos de guía
+            guide_ring = ComponentFactory.create_cylinder(P["docking_port_d"] + 300, 100,
+                                                        cx=pos[0], cy=pos[1] + P["docking_port_l"], cz=pos[2], axis='y')
+
+            # Etiqueta del tipo de puerto
+            port_label = Part.makeBox(200, 50, 20)
+            port_label.Placement = App.Placement(App.Vector(pos[0] - 100, pos[1] + P["docking_port_l"] + 50, pos[2] - 10), App.Rotation())
+
+            port_assembly = main_port.fuse(guide_ring).fuse(port_label)
+            docking_ports.append(port_assembly)
+
+        # Construir todos los puertos
+        if docking_ports:
+            self.shape = docking_ports[0]
+            for port in docking_ports[1:]:
+                self.shape = self.shape.fuse(port)
+
+        return self.shape
+
+class AdvancedThermalProtection(SpaceshipComponent):
+    def __init__(self):
+        super().__init__("Advanced_TPS", "CARBON_CARBON")
+
+    def build(self) -> Part.Shape:
+        # TPS para módulos presurizados (radiación térmica y protección contra micrometeoritos)
+        tps_layers = []
+
+        # TPS para módulos de habitación
+        for i in range(P["habitation_module_n"]):
+            module_tps = ComponentFactory.create_cylinder(P["module_diameter"] + P["tps_thickness"]*2,
+                                                        P["habitation_module_l"] + P["tps_thickness"]*2,
+                                                        cx=i * (P["habitation_module_l"] + 2000),
+                                                        cy=P["truss_width"]/2.0 + P["module_diameter"]/2.0 + P["tps_thickness"])
+            inner_cut = ComponentFactory.create_cylinder(P["module_diameter"], P["habitation_module_l"],
+                                                       cx=i * (P["habitation_module_l"] + 2000),
+                                                       cy=P["truss_width"]/2.0 + P["module_diameter"]/2.0 + P["tps_thickness"])
+            module_tps = module_tps.cut(inner_cut)
+            tps_layers.append(module_tps)
+
+        # TPS para módulos de laboratorio
+        for i in range(P["laboratory_module_n"]):
+            module_tps = ComponentFactory.create_cylinder(P["module_diameter"] + P["tps_thickness"]*2,
+                                                        P["laboratory_module_l"] + P["tps_thickness"]*2,
+                                                        cx=i * (P["laboratory_module_l"] + 2000),
+                                                        cy=-P["truss_width"]/2.0 - P["module_diameter"]/2.0 - P["tps_thickness"])
+            inner_cut = ComponentFactory.create_cylinder(P["module_diameter"], P["laboratory_module_l"],
+                                                       cx=i * (P["laboratory_module_l"] + 2000),
+                                                       cy=-P["truss_width"]/2.0 - P["module_diameter"]/2.0 - P["tps_thickness"])
+            module_tps = module_tps.cut(inner_cut)
+            tps_layers.append(module_tps)
+
+        # Construir TPS completo
+        if tps_layers:
+            self.shape = tps_layers[0]
+            for layer in tps_layers[1:]:
+                self.shape = self.shape.fuse(layer)
+        else:
+            # TPS básico si no hay módulos
+            self.shape = ComponentFactory.create_cylinder(P["module_diameter"] + P["tps_thickness"]*2, 1000)
+
+        return self.shape
+
+class MultiLayerRadiationShield(SpaceshipComponent):
+    def __init__(self):
+        super().__init__("MultiLayer_Radiation_Shield", "LEAD")
+
+    def build(self) -> Part.Shape:
+        layers = []
+        for i in range(min(P["rad_shield_layers"], len(P["rad_materials"]))):
+            layer_r = P["hull_outer_d"]/2.0 + (i+1) * P["rad_layer_t"] * 2
+            layer = ComponentFactory.create_cylinder(layer_r * 2, P["total_length"], cx=P["total_length"]/2.0)
+            inner_r = layer_r - P["rad_layer_t"] * 2
+            inner_cut = ComponentFactory.create_cylinder(inner_r * 2, P["total_length"] + 200, cx=P["total_length"]/2.0)
+            layer = layer.cut(inner_cut)
+            layers.append(layer)
+
+        if layers:
+            self.shape = layers[0]
+            for l in layers[1:]:
+                self.shape = self.shape.fuse(l)
+        return self.shape
+
+class OMSPropulsionSystem(SpaceshipComponent):
+    def __init__(self):
+        super().__init__("OMS_Propulsion_System", "TITANIUM")
+
+    def build(self) -> Part.Shape:
+        components = []
+
+        # Pods OMS (como en el Shuttle real)
+        for side in [1, -1]:
+            oms_pod = ComponentFactory.create_cylinder(P["oms_pod_d"], P["oms_pod_l"],
+                                                     cx=P["total_length"] - 4000,
+                                                     cy=side * (P["fuselage_width"]/2.0 + P["oms_pod_d"]/2.0 + 200),
+                                                     cz=0, axis='x')
+            components.append(oms_pod)
+
+        # Motores OMS
+        for side in [1, -1]:
+            oms_engine = ComponentFactory.create_cone(P["oms_engine_d"], P["oms_engine_d"]*0.6, P["oms_engine_l"],
+                                                    cx=P["total_length"] - 4000 + P["oms_pod_l"],
+                                                    cy=side * (P["fuselage_width"]/2.0 + P["oms_pod_d"]/2.0 + 200),
+                                                    cz=0, axis='x')
+            components.append(oms_engine)
+
+        # Tanques de hidrógeno para OMS
+        for i in range(P["hydrogen_tank_n"]):
+            tank = ComponentFactory.create_cylinder(P["hydrogen_tank_d"], P["hydrogen_tank_l"],
+                                                  cx=P["nose_length"] + P["crew_compartment_l"] + 500 + i * 1000,
+                                                  cy=P["fuselage_width"]/3.0, cz=0, axis='y')
+            components.append(tank)
+
+        # Tanques de oxígeno para OMS
+        for i in range(P["oxygen_tank_n"]):
+            tank = ComponentFactory.create_cylinder(P["oxygen_tank_d"], P["oxygen_tank_l"],
+                                                  cx=P["nose_length"] + P["crew_compartment_l"] + 500 + i * 1000,
+                                                  cy=-P["fuselage_width"]/3.0, cz=0, axis='y')
+            components.append(tank)
+
+        # Sistema RCS (Reaction Control System) - 44 thrusters como Shuttle
+        rcs_positions = [
+            # Thrusters frontales
+            (P["nose_length"] + 1000, P["fuselage_width"]/2.0 + 300, P["fuselage_height"]/2.0 + 200),
+            (P["nose_length"] + 1000, -P["fuselage_width"]/2.0 - 300, P["fuselage_height"]/2.0 + 200),
+            (P["nose_length"] + 1000, P["fuselage_width"]/2.0 + 300, -P["fuselage_height"]/2.0 - 200),
+            (P["nose_length"] + 1000, -P["fuselage_width"]/2.0 - 300, -P["fuselage_height"]/2.0 - 200),
+            # Thrusters traseros
+            (P["total_length"] - 1000, P["fuselage_width"]/2.0 + 300, P["fuselage_height"]/2.0 + 200),
+            (P["total_length"] - 1000, -P["fuselage_width"]/2.0 - 300, P["fuselage_height"]/2.0 + 200),
+            (P["total_length"] - 1000, P["fuselage_width"]/2.0 + 300, -P["fuselage_height"]/2.0 - 200),
+            (P["total_length"] - 1000, -P["fuselage_width"]/2.0 - 300, -P["fuselage_height"]/2.0 - 200),
+        ]
+
+        for pos in rcs_positions:
+            thruster = ComponentFactory.create_cylinder(P["rcs_thruster_d"], P["rcs_thruster_l"],
+                                                      cx=pos[0], cy=pos[1], cz=pos[2], axis='x')
+            components.append(thruster)
+
+        # Más thrusters en lados
+        for i in range(14):  # Thrusters laterales
+            angle = i * (360.0 / 14)
+            x = P["nose_length"] + P["crew_compartment_l"] + 2000
+            y = P["fuselage_width"]/2.0 * math.cos(math.radians(angle))
+            z = P["fuselage_height"]/2.0 * math.sin(math.radians(angle))
+            thruster = ComponentFactory.create_cylinder(P["rcs_thruster_d"], P["rcs_thruster_l"],
+                                                      cx=x, cy=y, cz=z, axis='x')
+            components.append(thruster)
+
+        if components:
+            self.shape = components[0]
+            for comp in components[1:]:
+                self.shape = self.shape.fuse(comp)
+        return self.shape
+
+class ShuttleControlSurfaces(SpaceshipComponent):
+    def __init__(self):
+        super().__init__("Shuttle_Control_Surfaces", "CARBON_FIBER")
+
+    def build(self) -> Part.Shape:
+        surfaces = []
+
+        # Alas delta (características principales del Shuttle)
+        for side in [1, -1]:
+            # Crear geometría delta wing
+            wing_points = [
+                App.Vector(P["nose_length"] + 2000, 0, 0),  # Punta delantera
+                App.Vector(P["nose_length"] + 2000 + P["delta_wing_leading_edge"], side * P["delta_wing_span"]/2.0, 0),  # Punta del borde de ataque
+                App.Vector(P["nose_length"] + 2000 + P["delta_wing_leading_edge"] + P["delta_wing_trailing_edge"], side * P["delta_wing_span"]/4.0, 0),  # Punta del borde de fuga
+                App.Vector(P["nose_length"] + 2000 + P["delta_wing_trailing_edge"], 0, 0),  # Punta trasera
+            ]
+            wing_wire = Part.makePolygon(wing_points)
+            wing_face = Part.Face(wing_wire)
+            wing = wing_face.extrude(App.Vector(0, 0, P["delta_wing_t"]))
+            surfaces.append(wing)
+
+        # Ailerons (en las alas)
+        for side in [1, -1]:
+            aileron = Part.makeBox(P["aileron_chord"], P["aileron_span"], P["delta_wing_t"] + 50)
+            aileron.Placement = App.Placement(App.Vector(P["nose_length"] + 2000 + P["delta_wing_leading_edge"] * 0.7,
+                                                       side * (P["delta_wing_span"]/2.0 - P["aileron_span"]/2.0),
+                                                       P["delta_wing_t"]), App.Rotation())
+            surfaces.append(aileron)
+
+        # Elevons (en los bordes de fuga)
+        for side in [1, -1]:
+            elevon = Part.makeBox(P["elevon_chord"], P["elevon_span"], P["delta_wing_t"] + 50)
+            elevon.Placement = App.Placement(App.Vector(P["nose_length"] + 2000 + P["delta_wing_leading_edge"] + P["delta_wing_trailing_edge"] * 0.6,
+                                                      side * (P["delta_wing_span"]/4.0 - P["elevon_span"]/2.0),
+                                                      P["delta_wing_t"]), App.Rotation())
+            surfaces.append(elevon)
+
+        # Timón (rudder) en la cola vertical
+        rudder = Part.makeBox(P["rudder_w"], P["vertical_tail_t"] + 50, P["rudder_h"])
+        rudder.Placement = App.Placement(App.Vector(P["total_length"] - P["rudder_w"], -P["vertical_tail_t"]/2.0 - 25, P["vertical_tail_h"] - P["rudder_h"]), App.Rotation())
+        surfaces.append(rudder)
+
+        # Body flap (flap del cuerpo para control hipersónico)
+        body_flap = Part.makeBox(2000, P["fuselage_width"], 100)
+        body_flap.Placement = App.Placement(App.Vector(P["total_length"] - 3000, -P["fuselage_width"]/2.0, -P["fuselage_height"]/2.0 - 100), App.Rotation())
+        surfaces.append(body_flap)
+
+        if surfaces:
+            self.shape = surfaces[0]
+            for surf in surfaces[1:]:
+                self.shape = self.shape.fuse(surf)
+        return self.shape
+
+class PowerAndCommunicationSystems(SpaceshipComponent):
+    def __init__(self):
+        super().__init__("Power_Communication_Systems", "CARBON_FIBER")
+
+    def build(self) -> Part.Shape:
+        systems = []
+
+        # Paneles solares desplegables
+        for i in range(P["solar_n"]):
+            side = 1 if i % 2 == 0 else -1
+            panel = Part.makeBox(P["solar_panel_l"], P["solar_panel_w"], P["solar_panel_t"])
+            panel.Placement = App.Placement(App.Vector(P["nose_length"] + P["crew_compartment_l"] + 5000 + i*1000,
+                                                     side * (P["fuselage_width"]/2.0 + P["solar_panel_w"]/2.0 + 200),
+                                                     P["fuselage_height"]/2.0 + 500), App.Rotation())
+            systems.append(panel)
+
+        # Celdas de combustible (fuel cells) para energía eléctrica
+        for i in range(P["fuel_cell_n"]):
+            fuel_cell = ComponentFactory.create_cylinder(P["fuel_cell_d"], P["fuel_cell_l"],
+                                                       cx=P["nose_length"] + P["crew_compartment_l"] + 3000 + i * 1000,
+                                                       cy=P["fuselage_width"]/2.0 - 500,
+                                                       cz=-P["fuselage_height"]/2.0 + P["fuel_cell_d"]/2.0, axis='y')
+            systems.append(fuel_cell)
+
+        # Antenas de comunicaciones
+        # Antena parabólica principal
+        dish = Part.makeSphere(P["antenna_dish_r"])
+        dish.Placement = App.Placement(App.Vector(P["nose_length"] + P["crew_compartment_l"] + P["antenna_dish_t"]/2.0,
+                                                P["fuselage_width"]/2.0 + 600, P["fuselage_height"]/2.0 + 300), App.Rotation(App.Vector(0,1,0), 90))
+        try:
+            dish.Scale = App.Vector(1, 1, 0.3)
+        except:
+            pass
+        systems.append(dish)
+
+        # Antena Ku-band
+        ku_antenna = ComponentFactory.create_cylinder(P["ku_band_antenna_r"]*2, P["ku_band_antenna_t"],
+                                                    cx=P["nose_length"] + P["crew_compartment_l"] + P["ku_band_antenna_t"]/2.0,
+                                                    cy=-P["fuselage_width"]/2.0 - 600, cz=P["fuselage_height"]/2.0 + 300, axis='x')
+        systems.append(ku_antenna)
+
+        if systems:
+            self.shape = systems[0]
+            for sys in systems[1:]:
+                self.shape = self.shape.fuse(sys)
+        return self.shape
+
+class ScientificPayload(SpaceshipComponent):
+    def __init__(self):
+        super().__init__("Scientific_Payload", "TITANIUM")
+
+    def build(self) -> Part.Shape:
+        instruments = []
+
+        # Magnetómetro en boom extendido
+        mag_boom = ComponentFactory.create_cylinder(P["magnetometer_boom_r"]*2, P["magnetometer_boom_l"],
+                                                  cx=P["nose_length"] + P["crew_compartment_l"] + P["magnetometer_boom_l"]/2.0,
+                                                  cy=P["fuselage_width"]/2.0 + 800, cz=0, axis='x')
+        instruments.append(mag_boom)
+
+        # Detector de partículas
+        particle_det = ComponentFactory.create_cylinder(P["particle_detector_d"], P["particle_detector_l"],
+                                                      cx=P["nose_length"] + P["crew_compartment_l"] + P["particle_detector_l"]/2.0,
+                                                      cy=-P["fuselage_width"]/2.0 - 800, cz=0, axis='x')
+        instruments.append(particle_det)
+
+        # Booms científicos extendidos
+        for side in [1, -1]:
+            boom = ComponentFactory.create_cylinder(P["science_boom_r"]*2, P["science_boom_l"],
+                                                  cx=P["nose_length"] + P["crew_compartment_l"]/2.0,
+                                                  cy=side * (P["fuselage_width"]/2.0 + 1000),
+                                                  cz=P["fuselage_height"]/2.0 + P["science_boom_l"]/2.0, axis='y')
+            instruments.append(boom)
+
+        if instruments:
+            self.shape = instruments[0]
+            for inst in instruments[1:]:
+                self.shape = self.shape.fuse(inst)
+        return self.shape
+
+class DockingSystem(SpaceshipComponent):
+    def __init__(self):
+        super().__init__("Docking_System", "TITANIUM")
+
+    def build(self) -> Part.Shape:
+        # Sistema de acoplamiento para estaciones espaciales (como APAS-95)
+        docking_port = ComponentFactory.create_cylinder(P["docking_system_d"], P["docking_system_l"],
+                                                      cx=P["nose_length"] + P["crew_compartment_l"] + P["docking_system_l"]/2.0,
+                                                      cy=0, cz=P["fuselage_height"]/2.0 + P["docking_system_d"]/2.0, axis='x')
+
+        # Anillos de guía
+        guide_ring_outer = ComponentFactory.create_cylinder(P["docking_system_d"] + 200, 50,
+                                                          cx=P["nose_length"] + P["crew_compartment_l"] + P["docking_system_l"] + 25,
+                                                          cy=0, cz=P["fuselage_height"]/2.0 + P["docking_system_d"]/2.0, axis='x')
+        guide_ring_inner = ComponentFactory.create_cylinder(P["docking_system_d"] - 100, 60,
+                                                          cx=P["nose_length"] + P["crew_compartment_l"] + P["docking_system_l"] + 20,
+                                                          cy=0, cz=P["fuselage_height"]/2.0 + P["docking_system_d"]/2.0, axis='x')
+        guide_ring = guide_ring_outer.cut(guide_ring_inner)
+
+        self.shape = docking_port.fuse(guide_ring)
+        return self.shape
+
+class LifeSupportSystem(SpaceshipComponent):
+    def __init__(self):
+        super().__init__("Life_Support_System", "TITANIUM")
+
+    def build(self) -> Part.Shape:
+        systems = []
+
+        # Sistema principal de soporte vital
+        life_support_unit = ComponentFactory.create_cylinder(P["life_support_d"], P["life_support_l"],
+                                                           cx=P["nose_length"] + P["crew_compartment_l"] - 1000,
+                                                           cy=P["fuselage_width"]/2.0 - P["life_support_d"]/2.0 - 100,
+                                                           cz=-P["fuselage_height"]/2.0 + P["life_support_d"]/2.0, axis='y')
+        systems.append(life_support_unit)
+
+        # Tanques de oxígeno de emergencia
+        for i in range(P["emergency_oxygen_n"]):
+            emergency_tank = ComponentFactory.create_cylinder(P["emergency_oxygen_d"], P["emergency_oxygen_l"],
+                                                            cx=P["nose_length"] + 500 + i * 300,
+                                                            cy=P["fuselage_width"]/2.0 - 200,
+                                                            cz=P["fuselage_height"]/2.0 - 200, axis='y')
+            systems.append(emergency_tank)
+
+        # Celdas de combustible (fuel cells) para energía
+        for i in range(P["fuel_cell_n"]):
+            fuel_cell = ComponentFactory.create_cylinder(P["fuel_cell_d"], P["fuel_cell_l"],
+                                                       cx=P["nose_length"] + P["crew_compartment_l"] + 1000 + i * 800,
+                                                       cy=-P["fuselage_width"]/2.0 + P["fuel_cell_d"]/2.0 + 100,
+                                                       cz=-P["fuselage_height"]/2.0 + P["fuel_cell_d"]/2.0, axis='y')
+            systems.append(fuel_cell)
+
+        if systems:
+            self.shape = systems[0]
+            for sys in systems[1:]:
+                self.shape = self.shape.fuse(sys)
+        return self.shape
+
+class PayloadAttachmentSystem(SpaceshipComponent):
+    def __init__(self):
+        super().__init__("Payload_Attachment_System", "STEEL")
+
+    def build(self) -> Part.Shape:
+        attachments = []
+
+        # Puntos de anclaje en la bahía de carga (como Shuttle)
+        attachment_positions = [
+            (P["nose_length"] + 3000, 0, 0),
+            (P["nose_length"] + 6000, P["cargo_bay_width"]/3.0, 0),
+            (P["nose_length"] + 6000, -P["cargo_bay_width"]/3.0, 0),
+            (P["nose_length"] + 9000, P["cargo_bay_width"]/4.0, P["cargo_bay_height"]/4.0),
+            (P["nose_length"] + 9000, -P["cargo_bay_width"]/4.0, P["cargo_bay_height"]/4.0),
+            (P["nose_length"] + 12000, 0, P["cargo_bay_height"]/3.0),
+        ]
+
+        for pos in attachment_positions:
+            attachment_point = ComponentFactory.create_cylinder(200, 300, cx=pos[0], cy=pos[1], cz=pos[2], axis='y')
+            attachments.append(attachment_point)
+
+        # Sistema de liberación pirotécnica (simulado)
+        for pos in attachment_positions[:4]:  # Solo algunos puntos
+            release_mechanism = ComponentFactory.create_cylinder(100, 150, cx=pos[0], cy=pos[1] + 150, cz=pos[2], axis='y')
+            attachments.append(release_mechanism)
+
+        if attachments:
+            self.shape = attachments[0]
+            for att in attachments[1:]:
+                self.shape = self.shape.fuse(att)
+        return self.shape
+
+class ShuttleLandingSystem(SpaceshipComponent):
+    def __init__(self):
+        super().__init__("Shuttle_Landing_System", "TITANIUM")
+
+    def build(self) -> Part.Shape:
+        landing_parts = []
+
+        # Tren principal (main gear) - 2 unidades como Shuttle
+        for side in [1, -1]:
+            main_strut = ComponentFactory.create_cylinder(P["main_gear_strut_d"], P["main_gear_strut_l"],
+                                                        cx=P["nose_length"] + P["crew_compartment_l"] + 2000,
+                                                        cy=side * P["fuselage_width"]/3.0,
+                                                        cz=-P["fuselage_height"]/2.0 - P["main_gear_strut_l"]/2.0, axis='y')
+            main_wheel = ComponentFactory.create_cylinder(P["landing_gear_wheel_d"], P["landing_gear_wheel_w"],
+                                                        cx=P["nose_length"] + P["crew_compartment_l"] + 2000,
+                                                        cy=side * P["fuselage_width"]/3.0,
+                                                        cz=-P["fuselage_height"]/2.0 - P["main_gear_strut_l"] - P["landing_gear_wheel_w"]/2.0, axis='y')
+            landing_parts.append(main_strut.fuse(main_wheel))
+
+        # Tren de nariz (nose gear) - 1 unidad
+        nose_strut = ComponentFactory.create_cylinder(P["nose_gear_strut_d"], P["nose_gear_strut_l"],
+                                                    cx=P["nose_length"] + 1000,
+                                                    cy=0,
+                                                    cz=-P["fuselage_height"]/2.0 - P["nose_gear_strut_l"]/2.0, axis='y')
+        nose_wheel = ComponentFactory.create_cylinder(P["landing_gear_wheel_d"] * 0.8, P["landing_gear_wheel_w"],
+                                                    cx=P["nose_length"] + 1000,
+                                                    cy=0,
+                                                    cz=-P["fuselage_height"]/2.0 - P["nose_gear_strut_l"] - P["landing_gear_wheel_w"]/2.0, axis='y')
+        landing_parts.append(nose_strut.fuse(nose_wheel))
+
+        if landing_parts:
+            self.shape = landing_parts[0]
+            for part in landing_parts[1:]:
+                self.shape = self.shape.fuse(part)
+        return self.shape
+
+# ========================
+# Función Principal de la Estación Espacial
+# ========================
+def build_modular_space_station():
+    """Construir la estación espacial modular ISS-like para misiones de larga duración..."""
+
+    print("Iniciando construcción de estación espacial modular ISS-like para misiones de larga duración...")
+
+    # Crear componentes principales
+    truss = CentralTruss()
+    truss_obj = truss.add_to_document()
+
+    # Módulos de habitación
+    habitation_modules = []
+    for i in range(P["habitation_module_n"]):
+        module = HabitationModule(i + 1)
+        module_obj = module.add_to_document()
+        habitation_modules.append(module_obj)
+
+    # Módulos de laboratorio
+    laboratory_modules = []
+    for i in range(P["laboratory_module_n"]):
+        module = LaboratoryModule(i + 1)
+        module_obj = module.add_to_document()
+        laboratory_modules.append(module_obj)
+
+    # Paneles solares
+    solar_arrays = []
+    for i in range(P["solar_array_pairs"] * 2):  # Pares de paneles
+        array = SolarArray(i + 1)
+        array_obj = array.add_to_document()
+        solar_arrays.append(array_obj)
+
+    # Brazo robótico
+    if CONFIG.enable_robotic_arms:
+        robotic_arm = RoboticArm()
+        arm_obj = robotic_arm.add_to_document()
+
+    # Puertos de acoplamiento múltiples
+    docking_ports = MultipleDockingPorts()
+    dock_obj = docking_ports.add_to_document()
+
+    # Protección de radiación extrema
+    radiation_shield = MultiLayerRadiationShield()
+    rad_obj = radiation_shield.add_to_document()
+
+    # Sistemas de propulsión y control
+    propulsion = OMSPropulsionSystem()
+    prop_obj = propulsion.add_to_document()
+
+    # Energía y comunicaciones
+    power_comm = PowerAndCommunicationSystems()
+    power_obj = power_comm.add_to_document()
+
+    # Instrumentos científicos
+    science = ScientificPayload()
+    sci_obj = science.add_to_document()
+
+    # Calcular masa total aproximada
+    total_mass = (truss.get_total_mass() + radiation_shield.get_total_mass() + propulsion.get_total_mass() +
+                  power_comm.get_total_mass() + science.get_total_mass() + docking_ports.get_total_mass())
+
+    for module in habitation_modules + laboratory_modules:
+        total_mass += module.Proxy.get_total_mass()
+
+    for array in solar_arrays:
+        total_mass += array.Proxy.get_total_mass()
+
+    if CONFIG.enable_robotic_arms:
+        total_mass += robotic_arm.get_total_mass()
+
+    print(f"Masa total aproximada de la estación: {total_mass:.2f} kg")
+
+    # Fusionar componentes principales para objeto final
+    main_components = [truss_obj, rad_obj, prop_obj, power_obj, sci_obj, dock_obj] + habitation_modules + laboratory_modules + solar_arrays
+    if CONFIG.enable_robotic_arms:
+        main_components.append(arm_obj)
+
+    fused_shape = main_components[0].Shape
+    for comp in main_components[1:]:
+        if comp and hasattr(comp, 'Shape'):
+            try:
+                fused_shape = fused_shape.fuse(comp.Shape)
+                print(f"Fusionado: {comp.Name}")
+            except Exception as e:
+                print(f"Error fusionando {comp.Name}: {e}")
+
+    # Crear objeto final
+    final_obj = doc.addObject("Part::Feature", "Modular_Space_Station_ISS_Style")
+    final_obj.Shape = fused_shape
+    final_obj.ViewObject.ShapeColor = (0.7, 0.7, 0.8)  # Color general para estación
+    final_obj.ViewObject.DisplayMode = "Shaded"
+
+    # Añadir propiedades personalizadas
+    final_obj.addProperty("App::PropertyFloat", "TotalMass", "Station", "Masa total aproximada (kg)")
+    final_obj.TotalMass = total_mass
+
+    final_obj.addProperty("App::PropertyString", "MissionType", "Station", "Tipo de misión")
+    final_obj.MissionType = CONFIG.mission_type
+
+    final_obj.addProperty("App::PropertyInt", "CrewCapacity", "Station", "Capacidad de tripulación")
+    final_obj.CrewCapacity = CONFIG.habitation_capacity
+
+    final_obj.addProperty("App::PropertyBool", "ModularDesign", "Station", "Diseño modular habilitado")
+    final_obj.ModularDesign = CONFIG.enable_modular_design
+
+    # Recomputar
+    doc.recompute()
+
+    try:
+        Gui.ActiveDocument.ActiveView.viewAxonometric()
+        Gui.SendMsgToActiveView("ViewFit")
+    except:
+        pass
+
+    print("Estación espacial modular ISS-like completada: arquitectura para misiones de larga duración.")
+    print("Características: estructura central truss modular, módulos presurizados habitables y de laboratorio,")
+    print("paneles solares masivos para generación de energía, brazos robóticos para manipulación externa,")
+    print("múltiples puertos de acoplamiento para expansión, blindaje de radiación extrema para protección,")
+    print("sistemas de propulsión para mantenimiento orbital, instrumentos científicos avanzados,")
+    print("diseño modular para lanzamiento en secciones y ensamblaje orbital, capacidad para 12 astronautas.")
+
+# Ejecutar construcción
+if __name__ == "__main__":
+    build_modular_space_station()

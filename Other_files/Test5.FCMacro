@@ -1,0 +1,137 @@
+ -*- coding:utf-8 -*-
+import FreeCAD as App, FreeCADGui as Gui, Part, math
+
+doc_name = "Direct_Fusion_Drive"
+doc = App.newDocument(doc_name) if App.ActiveDocument is None or App.ActiveDocument.Label != doc_name else App.ActiveDocument
+
+P={"nose_len":800.0,"nose_base_d":600.0,"mid_len":1400.0,"mid_d":900.0,"rear_len":800.0,"rear_d":1200.0,"hull_t":10.0,
+   "cockpit_w":900.0,"cockpit_h":400.0,"cockpit_l":600.0,"cockpit_x0":600.0,
+   "win_w":600.0,"win_h":250.0,"win_th":20.0,"win_y_off":0.5*(900.0/2.0-250.0/2.0),"win_z":0.0,
+   "reactor_d":800.0,"reactor_l":900.0,"reactor_cx":2600.0,
+   "ring_h":30.0,"ring_ro":420.0,"ring_ri":380.0,"ring_n":6,"ring_pitch":150.0,
+   "coil_rect_w":80.0,"coil_rect_h":80.0,"coil_R":440.0,"coil_n":4,"coil_span":800.0,
+   "moderator_t":100.0,"moderator_gap":20.0,"moderator_over":200.0,"tungsten_post_t":10.0,
+   "nozzle_throat_d":300.0,"nozzle_exit_d":900.0,"nozzle_l":700.0,"nozzle_cx":2850.0,"nozzle_fillet_r":40.0,
+   "truss_n":3,"truss_tube_w":80.0,"truss_R_attach":550.0,
+   "tank_d":300.0,"tank_l":700.0,"tank_cx":1600.0,"tank_cy":300.0,"tank_cz":-150.0,
+   "leg_L_fold":400.0,"leg_L_ext":600.0,"leg_foot_d":180.0,
+   "leg_side_x1":1050.0,"leg_side_x2":1950.0,"leg_side_y":600.0,
+   "leg_front_x":400.0,"leg_front_y":0.0,"leg_front_z":-(900.0/2.0)+50.0,
+   "wing_root_w":600.0,"wing_tip_w":150.0,"wing_chord":450.0,
+   "fin_h":400.0,"fin_base":200.0,"rad_panel_w":800.0,"rad_panel_h":600.0,"rad_panel_n":5}
+
+TPS={"tps_d":2400.0,"tps_t":100.0,"tps_gap":120.0,"sup_L":280.0,"sup_d_base":900.0,"sup_d_tip":600.0}
+RAD={"th":4.0,"mount_gap_y":30.0,"x_start":None,"gap_x":None,"count_pairs":3,"span_x":220.0,"arm_len":60.0,"arm_r":10.0}
+
+MAT={'AL':{'name':'AA-2xxx','rho':2700.0,'E':72e9,'nu':0.33,'type':'isotropic'},
+     'STEEL':{'name':'SS-304','rho':8000.0,'E':200e9,'nu':0.30,'type':'isotropic'},
+     'COPPER':{'name':'Copper','rho':8960.0,'E':110e9,'nu':0.34,'type':'isotropic'},
+     'CFRP':{'name':'CFRP','rho':1550.0,'Ex':130e9,'Ey':10e9,'Ez':10e9,'nu_xy':0.25,'type':'orthotropic'},
+     'CC':{'name':'C/C TPS','rho':1600.0,'Ex':70e9,'Ey':70e9,'Ez':10e9,'nu_xy':0.2,'type':'orthotropic'},
+     'KEVLAR':{'name':'Kevlar','rho':1440.0,'Ex':70e9,'Ey':5e9,'Ez':5e9,'nu_xy':0.27,'type':'orthotropic'}}
+
+X_AXIS=App.Vector(1,0,0);Y_AXIS=App.Vector(0,1,0);Z_AXIS=App.Vector(0,0,1)
+def rot_to_x():return App.Rotation(Y_AXIS,90)
+
+def add_obj(s,l):
+    if s is None or s.isNull(): return None
+    o=doc.addObject("Part::Feature",l);o.Shape=s;return o
+
+def set_mat(o,m):
+    if not o:return
+    m=MAT.get(m,None)if isinstance(m,str)else m
+    if not m:return
+    o.addProperty("App::PropertyString","Material","Meta","").Material=m.get('name','')
+    o.addProperty("App::PropertyMap","MaterialData","Meta","").MaterialData={k:str(v)for k,v in m.items()}
+    o.addProperty("App::PropertyFloat","Density","Meta","").Density=m.get('rho',0.0)
+
+def make_cyl_x(d,L,cx=0,cy=0,cz=0,l="CylX"):
+    if d<=0 or L<=0: return None
+    r=d/2;c=Part.makeCylinder(r,L)
+    c.Placement=App.Placement(App.Vector(cx-L/2,cy,cz),rot_to_x())
+    return add_obj(c,l)
+
+def make_cone_x(d1,d2,L,cx=0,cy=0,cz=0,l="ConeX"):
+    # Evita punta degenerada: diámetro mínimo
+    d2=max(d2,6.0)
+    r1=d1/2;r2=d2/2
+    if L<=0 or r1<=0 or r2<0: return None
+    c=Part.makeCone(r1,r2,L)
+    c.Placement=App.Placement(App.Vector(cx-L/2,cy,cz),rot_to_x())
+    return add_obj(c,l)
+
+def make_box(w,d,h,cx=0,cy=0,cz=0,l="Box"):
+    if min(w,d,h)<=0: return None
+    b=Part.makeBox(w,d,h)
+    b.Placement=App.Placement(App.Vector(cx-w/2,cy-d/2,cz-h/2),App.Rotation())
+    return add_obj(b,l)
+
+# Fuselaje macizo (sin offset interno para evitar huecos y errores del kernel)
+nose=make_cone_x(P["nose_base_d"],0,P["nose_len"],cx=P["nose_len"]/2,l="Nose");set_mat(nose,'AL')
+mid=make_cyl_x(P["mid_d"],P["mid_len"],cx=P["nose_len"]+P["mid_len"]/2,l="Mid");set_mat(mid,'AL')
+rear=make_cyl_x(P["rear_d"],P["rear_len"],cx=P["nose_len"]+P["mid_len"]+P["rear_len"]/2,l="Rear");set_mat(rear,'AL')
+
+# Fusión inicial del fuselaje
+fuse_fuselage_shape = nose.Shape.fuse(mid.Shape).fuse(rear.Shape).removeSplitter()
+fuse = fuse_fuselage_shape
+
+# Eliminar cascarón hueco: mantener sólido
+def make_hollow(s,t,l="Shell"):
+    # Respetar firma pero devolver sólido limpio (sin huecos)
+    return add_obj(s.removeSplitter(),l)
+
+hull=make_hollow(fuse,P["hull_t"],l="Hull");set_mat(hull,'AL')
+
+# TPS: soporte cónico + disco C/C
+tps_sup=make_cone_x(TPS["sup_d_base"],TPS["sup_d_tip"],TPS["sup_L"],cx=P["nose_len"]+TPS["tps_gap"]+TPS["sup_L"]/2,l="TPS_Sup");set_mat(tps_sup,'STEEL')
+tps_disk=make_cyl_x(TPS["tps_d"],TPS["tps_t"],cx=P["nose_len"]+TPS["tps_gap"]+TPS["sup_L"]+TPS["tps_t"]/2,l="TPS_Disk");set_mat(tps_disk,'CC')
+
+# Ensamblaje TPS con limpieza
+tps_fuse=tps_sup.Shape.fuse(tps_disk.Shape).removeSplitter()
+TPS_asm=add_obj(tps_fuse,"TPS_Asm");set_mat(TPS_asm,'CC')
+
+# Ventanas: se mantienen pero cuidado que introducen huecos. Si NOTA: quieres 100% sólido, comenta estas dos líneas:
+#win1=make_box(P["win_w"],P["win_th"],P["win_h"],cx=P["cockpit_x0"]+P["cockpit_l"]/2,cy=(P["mid_d"]/2)-P["win_th"]/2,cz=P["win_z"],l="WinR")
+#win2=make_box(P["win_w"],P["win_th"],P["win_h"],cx=P["cockpit_x0"]+P["cockpit_l"]/2,cy=-(P["mid_d"]/2)+P["win_th"]/2,cz=P["win_z"],l="WinL")
+hull_cut=add_obj(hull.Shape.cut(win1.Shape).cut(win2.Shape).removeSplitter(),"Hull_Cut");set_mat(hull_cut,'AL')
+
+# Cabina maciza (en sombra)
+cockpit_box=Part.makeBox(P["cockpit_l"],P["cockpit_w"],P["cockpit_h"])
+cockpit_box.Placement=App.Placement(App.Vector(P["cockpit_x0"],-P["cockpit_w"]/2,-P["cockpit_h"]/2),App.Rotation())
+cockpit=add_obj(cockpit_box,"Cockpit");set_mat(cockpit,'AL')
+
+# Reactor y moderador (macizos, sin offsets)
+reactor=make_cyl_x(P["reactor_d"],P["reactor_l"],cx=P["reactor_cx"],l="Reactor");set_mat(reactor,'STEEL')
+mod_outer=Part.makeCylinder(P["reactor_d"]/2+P["moderator_gap"]+P["moderator_t"],P["reactor_l"])
+mod_inner=Part.makeCylinder(P["reactor_d"]/2+P["moderator_gap"],P["reactor_l"]-0.1)  # signo invertido para estabilidad
+shield=mod_outer.cut(mod_inner).removeSplitter()
+shield.Placement=App.Placement(App.Vector(P["reactor_cx"]-P["reactor_l"]/2,0,0),rot_to_x())
+shield_obj=add_obj(shield,"Moderator");set_mat(shield_obj,'STEEL')
+
+# Tobera (con punta no degenerada)
+noz=Part.makeCone(max(P["nozzle_throat_d"]/2,3.0),P["nozzle_exit_d"]/2,P["nozzle_l"])
+noz.Placement=App.Placement(App.Vector(P["nozzle_cx"]-P["nozzle_l"]/2,0,0),rot_to_x())
+noz_obj=add_obj(noz,"Nozzle");set_mat(noz_obj,'STEEL')
+
+# Tanques macizos
+tank1=make_cyl_x(P["tank_d"],P["tank_l"],cx=P["tank_cx"],cy=P["tank_cy"],cz=P["tank_cz"],l="Tank_R")
+tank2=make_cyl_x(P["tank_d"],P["tank_l"],cx=P["tank_cx"],cy=-P["tank_cy"],cz=P["tank_cz"],l="Tank_L")
+set_mat(tank1,'AL');set_mat(tank2,'AL')
+
+# Alas y aleta (macizas)
+wing_r=make_box(P["wing_chord"],P["wing_root_w"],40,cx=P["nose_len"]+500,cy=P["mid_d"]/2+40,l="Wing_R")
+wing_l=make_box(P["wing_chord"],P["wing_root_w"],40,cx=P["nose_len"]+500,cy=-(P["mid_d"]/2+40),l="Wing_L")
+set_mat(wing_r,'AL');set_mat(wing_l,'AL')
+fin=make_box(P["fin_base"],20,P["fin_h"],cx=P["nose_len"]+P["mid_len"],cz=0,l="Fin");set_mat(fin,'AL')
+
+# Lista y fusión final con filtrado y limpieza
+fuse_all=[hull_cut,cockpit,TPS_asm,nose,mid,rear,reactor,shield_obj,noz_obj,tank1,tank2,wing_r,wing_l,fin]
+fuse_all=[o for o in fuse_all if o and hasattr(o,'Shape') and not o.Shape.isNull()]
+fused=fuse_all[0].Shape
+for o in fuse_all[1:]:
+    fused=fused.fuse(o.Shape).removeSplitter()
+
+add_obj(fused.removeSplitter(),"DFD_Fused")
+
+try: Gui.ActiveDocument.ActiveView.fitAll()
+except: pass
