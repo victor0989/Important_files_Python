@@ -1,0 +1,641 @@
+﻿Combustion systems & fuel, composites, mechanical designs (Documentation for design materials) Plasma/fuels
+
+
+  
+
+
+
+
+
+
+
+Main idea:
+The idea is to structure plasma and alternative fuel structures within the scope of the SpaceX falcon, with its fuselage, Merlin-D engine, and combustion at the documentary approach level. It is interesting to be able to design new structures for space vehicles with composites for use in fires and natural disasters that could occur millions of years from now. As for the sensors, Vivado, Xilinx offers Microblaze processor design support and VHDL for the satellites. 
+
+
+VASIMIR Propulsion
+High density (>1019/m-3 ,) steady-state helicon discharges in hydrogen, helium, deuterium and argon are now routine and, as shown in Figures 3(a) and 3(b,) already show a high velocity exhaust downstream of the magnetic throat. Flow velocities of 15 Kml sec, measured with a reciprocating Mach probe, are quite common and indicate a respectably high specific impulse even before ICRH power is added.
+
+
+
+
+The functional design of a cold gas propulsion system. The formation flying of two satellites implies the following; the initial relative position and velocity is maintained while the orbital altitude of the satellites may degrade. The decay of the satellites is influenced by atmospheric drag and by the geo-potential field, the Earth’s gravity field. Due to differences in position, area and mass of the satellites they drift apart and for this the propulsion system is adjusting [1]. Depending on the distance the satellites are allowed to drift apart, the frequency and accuracy of the corrections are obtained. These parameters can be translated into a minimum impulse bit. For formation flying the impulse bit is simply defined by: I b = ∆ = 
+
+
+JET ENGINE COMPONENTS
+1. Diffuser           - Slows down airflow and increases pressure.
+2. Compressor         - Increases air pressure via energy transfer from turbine.
+3. Combustion Chamber - Location of air-fuel combustion.
+4. Turbine            - Converts thermal energy to mechanical energy.
+5. Nozzle             - Accelerates exhaust gases for thrust.
+
+
+
+
+SPACECRAFT COMPONENTS
+1. Jet Engines        - Provide thrust.
+2. Fuel System        - Stores/supplies fuel.
+3. Control System     - Regulates engines/operations.
+
+
+  
+
+
+
+In the International Space Station, an experimental VASIMR operating at 25kW could provide sufficient thrust to neutralize the atmospheric drag on the facility. The system could operate on deuterium or hydrogen. VASIMR technology enables very fast human planetary transits to Mars and beyond. The development of the VASIMR and other advanced plasma rockets addresses a fundamental need in space transportation. Such an investment in technology will also benefit the commercial satellite industry, by enabling much higher payloads and mission flexibility. While a relative newcomer to the family of advanced rockets, V ASIMR has evolved rapidly and its research team is now demonstrating important i results in several areas. Such advances place it in a competitive realm with the more mature technologies of electrostatic plasma accelerators.
+
+
+Receives power from solar or nuclear source:  Directed plasma jet & generates thrust
+Propellant options: H, He, 
+Ne, Ar, Kr, Xe…  
+
+
+Heated ions enter an adiabatic “nozzle” in the static magnetic field
+ ◦ Directs ~90% of the ion energy into an 
+axial plasma jet for thrust
+  
+
+
+
+
+
+Uses RF waves to couple  & power; VASIMR technology provides electric propulsion 
+(EP) with the power density needed for sustainable  human exploration
+
+
+ ◦ The technology scales naturally to power levels for 
+robotic and human exploration (> 40kW solar at first, 
+scalable to multi-Megawatts)
+ ◦ Specific impulse from 2000 s to 5000 s
+ ◦ Total dry mass is approximately 2600 kg for 1 MW
+ ◦ Adaptable to cover a broad range of mission 
+
+
+Requirements: Scalable to multi MW power levels  High power density (6 MW/m2)  Solar electric (near term and cargo)  Nuclear electric (future)
+  
+
+  
+
+
+
+Radiator mass reduction for space drives the design to high temperatures  (Stefan
+Boltzmann law) The High thermodynamic efficiency requires large ∆T Materials limit the maximum 
+Temperature. The Surface density can approach 1 kg/m2 and specific mass 
+below 0.2 kg/kW at 300 C
+
+
+Steady-state RF PPU– Compact 
+ Highly efficient ,Operated with both plasma stages TRL 5-6 (individual boards in vacuum)
+
+
+Power rated: 48 kW
+Efficiency:     91% (expect to increase to 95%)
+Size:       Weight:       
+40 cm x 40 cm x 120 cm
+ 40.1 kg;  α = 0.9 kg/kW
+ ICH
+
+
+ Power rated: 180 kW (24 hr ss burn in)
+ Efficiency:     
+98% now Size:       Weight:       
+40 cm x 40 cm x 120 cm 87.1 kg;  α = 0.5 kg/kW
+
+
+  
+
+
+
+  
+
+
+
+
+
+Very high power density  (~6 MW/m2) compared with DC discharges by coupling RF power through ceramic windows to excite naturally occurring plasma waves
+ 
+No DC bias is applied, no cathodes or anodes are needed. Plasma facing materials are well insulated by strong magnetic fields with field strength of a few tesla
+ 
+Specific impulse can be varied at constant power  by adjusting the balance 
+between the plasma source and the ion cyclotron heating (ICH) booster sections
+ 
+Wide range of operating power  supported without loss of efficiency. Very efficient conversion of input power to jet power (75% thruster efficiency, >65% system efficiency) allows more thrust and less propellant usage than Hall thrusters for a given solar electric power plant
+ 
+Wide range of propellant choices including xenon, krypton, argon, and neon. May also be adaptable to solids or liquids (ammonia, iodine, potassium, rubidium, etc.) if condensates do not pose a risk to the spacecraft. 
+
+
+Subsystem VASIMR® Hall
+Gas Injection
+ • Single port injection
+ • Simple flow control
+ • Separate injection for anode and cathode
+ • Complex feedback required for flow control
+
+
+Magnets
+ • Superconducting for high field with minimal power
+ • Well isolated from plasma
+ • Alignment with flow inherently provides surface protection
+ • Conventional, limits field
+ • Close proximity to plasma
+ • Alignment perpendicular to flow requires compromise for surface protection
+
+
+Thermal Management
+ • Low-temperature fluid loop for power and avionics
+ • High-temperature fluid loop to manage thruster heat rejection
+ • Low-temperature fluid loop for power and avionics
+ • Very high-temperature to reject thruster waste heat by direct radiation
+
+
+
+
+Called the “ion cyclotron” wave Ion Cyclotron Heating (ICH) uses  resonance between wave and ion 
+gyro-motion Resonance near the aft end of the 
+booster
+
+
+Magnetic field fully shields ceramic parts
+Acceleration from ICH enhances the source:
+
+
+  
+
+
+
+PROPULSION MATERIALS
+1. Fuel & Oxidizers   - Generate thrust.
+2. Plasma Propulsion  - Plasma-based systems.
+
+
+BLACK HOLE RESEARCH
+1. Spacetime Symmetries
+2. Plasma Tensor Converter - Analyzes plasma-black hole interactions.
+
+
+THERMAL CONTROL SYSTEM (SACS)
+-----------------------------
+• Heat dissipation: 6400 W at 9.86 Rs
+• Liquid Cooling Loop (Redundant Pump/Electronics)
+• Temp Ranges:
+  - Operative: +20°C to +150°C
+  - Survival: +10°C to +190°C (wet), -80°C to -130°C (dry)
+• Activation:
+  - Prelaunch: Accumulator heated to 40–50°C
+  - Radiators 2 & 3 active at 0.89 AU (Day 41)
+
+
+Key Components:
+• Accumulator (non-redundant)
+• Pump Electronics (block redundant)
+• Platens, Radiators, Valves
+• Thermal Simulation & Testing (C1/C2 configs)
+
+
+CALCULATIONS: COMPRESSOR STAGES
+-------------------------------
+Centrifugal Compressor:
+-----------------------
+INLET:
+C1 = 150 m/s; W1 = 250 m/s; U1 = 200 m/s
+OUTLET:
+C2 = 390 m/s; W2 = 150 m/s; U2 = 350 m/s
+β2 = Flow angle; β2’ = β2 + 5°
+
+
+(a) Impeller Type:
+    Based on the velocity triangle, calculate β2.
+    If β2 < 90° → Forward-curved
+       β2 = 90° → Radial
+       β2 > 90° → Backward-curved
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+________________
+
+
+Plasma propulsion systems (space & cars)
+
+
+  
+
+
+
+Notes: Experiments from 2009-2012 used a low
+temperature superconducting magnet 6 K
+
+
+ No coupling to plasma operation…Negligible current maintenance for steady magnetic field
+ High-temperature superconducting (HTS) magnet coil prototype developed and tested 
+in 2007 (Creare, Tai Yang) Preliminary design of proto-flight coils  and 
+manufacturing test with 2nd generation HTS (SuperPower Inc.) in 2008 Performance improving with Moore’s law Sunpower GT cryocooler baselined in 2013 preliminary design (200,000+ hours mean time to failure)
+
+
+Notes:  “Low temperature” system is pretty conventional ◦ Avionics, controllers, and cryocoolers with max temp ~35 °C ◦ RF generators with CSi modules can tolerate max temp up to ~85 °C to reduce radiator size  “High temperature” system for rocket core ◦ Heat flux measured during VX-200 operation ◦ Rocket core has Integrated Cooling and Electrical (ICE) jackets ◦ Combination cooling function with the RF power couplers ◦ As high as 280 °C An infrared camera and thermocouples measured the temperature evolution inside the VX-200 plasma source during operation with no cooling. Transient analysis was used to identify heat flux and hot spots.
+
+
+VASIMR® technology provides electric propulsion (EP) with the power density needed for 
+sustainable robotic space operations and human exploration [Reference 2,4]
+ ◦ The technology scales naturally to power levels supported by the National Research Council for robotic and human exploration (> 40kW solar at first, scalable to multi-Megawatts)
+ 
+ VASIMR® technology differs from traditional Hall thrusters and ion engines in that it relies on 
+natural wave propagation in magnetized plasma to reach high power density.
+
+
+ ◦ Waves include whistler or high-harmonic fast waves (HHFW) and ion cyclotron waves
+ ◦ Relaxes Child-Langmuir and Debye shielding constraints encountered in DC discharges
+  
+The technology has a long history of development (1979-present) with collaboration of 
+academia (MIT, Princeton, UMD, UTexas, UMich, etc.), national laboratories (ORNL, LANL), 
+international labs (Alfven, ANU, Japan), NASA and private industry.
+ ◦ All of the physics to support VASIMR as an advanced propulsion technology are well understood and have been demonstrated in the appropriate laboratory environment
+ ◦ Experimental results have been presented and published in multiple peer reviewed journals over several 
+years
+
+
+ ◦ VASIMR® technology has been developed almost entirely with private funding (~$30M) and has been 
+patented, but a great deal of misinformation circulates about its status
+  VASIMR is now fully enabled by modern technology developments, particularly high-power 
+solid state transistors and high-temperature superconducting (i.e. YBCO) tape.
+
+
+  
+
+
+
+
+
+A. Ceramic Surface Temperature Measurements 
+A conceptual schematic of a VASIMR® system is shown in Fig. 2. The 1st stage “Ionizer” is a helicon
+type plasma source. The 2nd stage “RF Heater” is an ion cyclotron heating device. Figure 2 also shows the temperature measurement locations of plasma-facing ceramics in the VX-200SS™ prototype. The ceramic windows confine neutral gas and allow RF power to be coupled through to the plasma, but they must tolerate the associated heat load. Ceramic temperature measurements are therefore important for monitoring the performance of the thermal design. Ad Astra has been using infrared pyrometers to measure plasma-facing component temperatures since 2019. Earlier efforts were thwarted by the challenges of the ambient environment within the rocket core. 
+
+
+B. Power Measurements 
+Each stage of a VASIMR thruster uses an independent radio frequency power system. Figure 3 shows 
+a simplified schematic of the power circuit for the 2nd stage of the VX-200SS™ prototype. The circuit for The 1st stage is similar, except that the 1st stage power processing unit (PPU) is still outside the vacuum. 
+
+
+The locations where power can be measured in the circuit. In this paper, all presented 
+power measurements were made with the DC current and voltage sensors located just to the left of the 
+vacuum feedthrough. For the 1st stage circuit, the DC sensors are at the connection to the PPU.
+  
+
+  
+
+
+
+ Propellant Sealing The plasma-facing ceramics of the VX-200SS™ are an assembly of several manufactured components. The ceramic-to-ceramic joints in this assembly must be sufficiently sealed to prevent leakage of neutral gas into the space between the rocket core and the magnet cryostat. If the pressure in this annular space becomes too high, the operational power of the VX-200SS™ will be limited by Paschen breakdown at the RF antennas. Designing seals for this application has been challenging; the seals must tolerate the temperature cycles of the ceramics, electromagnetic fields in the proximity of the radio frequency antennas, and the static field of the superconducting magnet. Figure 6 presents two measurements of partial pressure versus time during VX-200SS operation: one made in May 2021 and another in June. These mass spectra were measured by a residual gas analyzer in the upstream section of the vacuum chamber. During thruster operation, the upstream argon (40 u) pressure is due to a combination of argon exhaust leakage through the vacuum chamber partition wall and neutral propellant leakage from the rocket core seals. Since the vacuum pumping and partition wall seals are typically unchanged from one experimental campaign to the next, the evolution of ambient upstream argon pressure during thruster operation is a good indicator of the rocket core seal quality. 
+
+
+Fusion reactor system: It was designed to analyze small and large aspect ratio, tokamak fusion
+ Inductive and non-inductive heating, driven
+ and ignited operation, burning DT, DD, or D3He fuels.
+ 
+By pursuing peaked temperature and number density profiles fusion within the core of a plasma, a relatively small producing region was established, satisfying
+ Lawson and ignition criteria without necessitating large beta (13)throughout
+ the plasma. The lower temperature and number density outer regions would contribute to a
+ Volume-averaged 13 values within MHD stability limits.
+
+
+
+
+
+
+
+
+
+
+Major radius (m)                         2.48
+Minor radius (m)                         1.24
+Aspect ratio                             2.0
+Elongation                               3.0
+Plasma volume (m³)                       225.8
+Safety factor (edge)                     2.50
+Safety factor (axis)                     2.08
+Fuel ion density (10²/m³)                5.0
+Electron density (10²/m³)                7.5
+Plasma temperature (keV)                 50
+Volume averaged beta                     0.318
+Confinement and Plasma time (sec)        0.552
+Average neutron wall load (MW/m²)        1.03
+Average radiation wall load (MW/m²)      5.20
+Ignition margin                          1.235
+Toroidal magnetic field (centerline) (T) 8.9
+Maximum magnetic field (coil surface) (T) 52.1
+Gain factor (Q)                          73.1
+Plasma current (MA)                      66.22
+Bootstrap current fraction               0.934
+Wall reflectivity                        0.98
+Number density profile shape factor      1.0
+Temperature profile shape factor         2.0
+
+
+
+
+	  
+
+
+
+
+
+
+
+
+
+  
+
+In space, a vehicle can accelerate itself by ejecting part of its mass. This acceleration mechanism is called thrust and a device that generates thrust is called a thruster. The nozzle is a key component of the thruster because it increases the efficiency of the system. In the way the nozzle is shaped, it increases the supersonic velocity of a gaseous exhaust. With the same amount of expelled mass more thrust is generated and thus efficiency is improved. There are several methods by which thrust can be generated, not all of them are suitable for miniaturization.
+
+
+In a solid propellant system an array of small chambers, each having an igniter and a nozzle, is filled with a solid material. The solid propellant decomposes when enough heat is supplied. After ignition the hot gaseous products leave the chamber through the nozzle. In this way a predefined amount of impulse is generated and it is therefore also called digital propulsion.
+
+
+The following mechanisms are based on a propellant - gas or liquid - that is stored at high pressure. Besides a pressurized fuel tank such a propulsion system can consist of several components, i.e. filters, valves, pressure regulators, tubing, heaters and thrusters. For health monitoring, pressure sensors, flow meters, and temperature sensors might be necessary. Depending on the type of propulsion, this can be quite a complex system. Three different configurations of propulsion systems are discussed in order of increasing complexity and efficiency and all utilizing a pressurized gas tank. 
+
+
+Cold gas propulsion Cold gas propulsion is the simplest configuration, requiring the least components. In a controlled manner gas is released from a tank by a valve and expelled through the thruster. Such a cold gas blow-down rocket engine typically consists of a gas tank, a pressure and temperature sensor, an on/off valve and a thruster. If the tank contains a gas at a very high pressure a pressure regulator is required in between the tank and the valve to reduce the pressure to a convenient operation level. Grönland applied MST to build a cold gas thruster pod [23]. Another such system is presented by Köhler [24]. Although no MST was used, Gibbon and Wart presented a miniaturized propulsion system based on the vaporization of butane [25]. Butane is stored as a liquid propellant and is vaporized at a pressure of 3.8 bar at 40°C. The heated vapor is expelled through the thruster. Where ∆v (delta-v) is the change in velocity and m the mass of the satellite. The impulse bit is also expressed as the force T, which is actually the thrust, times tmin; the smallest time unit.
+
+
+The total delta-v is then calculated by: mission duration v ∆ = t ∆ v [m/s] (2.2) period between corrections:
+
+
+Power Conversion
+Mass Properties
+Recuperator                        23
+Compressor                         20
+Turbine                            9
+Alternator                         23
+Conditioning                       40
+Radiator                          236
+Power conditioning                 30
+Total (mt)                        381
+	
+
+ ve is the velocity of the reaction mass when it leaves the satellite, mi the initial mass and mf the final mass. By rewriting equation (2.3), the total amount of reaction mass for the mission is obtained: 
+Variables: m mmmm−∆  v v ∆ = − = − ⋅   ifixit / e 
+
+
+
+
+Mission duration                        1 year
+Orbital altitude                        500 km
+Satellite mass / dimensions             1kg / 10x10x10 cm³
+Allowed drift in distance               2 m
+
+
+Table 2-I: Mission characteristics
+Impulse bit                             90 µNs
+Number of corrections                   6000
+Total delta-v                           0.54 m/s
+Assumed exit velocity                   673 m/s (Ma=4)
+Reaction mass                           0.8 g
+
+
+Table 2-II: Propulsion requirements
+	
+
+the functional requirements of a cold gas propulsion system are presented. Our micro propulsion system is a simple blow down system of a rocket engine consisting of a thruster and feeding system and a propellant storage tank. Besides the use of micro system technology to reduce the size of the thruster and feeding system, a novel technology has been developed which makes it possible to reduce the size as well as the storage pressure of the propellant storage [5]. Cold gas generators (CGG) are used which contain a gas that is chemically stored inside a solid material. When ignited, nitrogen gas is released into a gas storage tank. Several CGG’s are connected to the storage tank to refill the tank when the pressure drops below a proper operation pressure for the thruster.
+  
+
+Low storage pressure - which is enabled by the cool gas generator technology and is typically between 1 and 4.5 bar - makes a pressure regulator redundant. Such a regulator is normally required when using high-pressure tanks. Moreover, the low pressure makes storage easier and makes the design of the MST thruster and feeding system less critical in terms of fracture. To prevent system failure, if by accident more than one CGG is ignited and thus causing a high tank pressure, the system has to be able to withstand a pressure of 10bar. 
+
+
+1. Tank pressure Our propulsion system is a blowdown system meaning the pressure decreases during propulsion. The tank pressure is between 1 and 4.5 bar depending on the amount of gas in the tank. The pressure is maintained within this range by releasing nitrogen from a CGG when the operation pressure drops below 1 bar. 
+
+
+2. Gas temperature We are building a cold gas propulsion system without any thermal housekeeping. This means the gas temperature is mainly dependent on the temperature of the satellite and on the heat generated by the ignition of a CGG. When the satellite is orbiting the earth, it is for part of the time in eclipse and otherwise in direct sunlight. This causes periodic temperature changes of the satellite. 
+The tank pressure and temperature are measured to be able to determine the amount of thrust before the actual propulsion is performed. The impulse bit, which is the parameter that should be precisely controlled to be able to do formation flying.
+
+
+When the satellite is in orbit two other environmental aspects are important namely, temperature and radiation. The operating range of the temperature depends on the thermal management of the satellite. In the extreme case the temperature can change 100°C from -40°C to 60°C in 90 minutes. The exposure to radiation is mainly important for sensitive electronic components which degrade over time due to radiation. But also mechanically, the protective body of the propulsion system should be thick enough to prevent puncture, and thus leakage, due to the impact of high-energy cosmic rays.
+
+
+The amount of thrust that is produced depends on the mass flow rate n m , the exit velocity of the exhaust ve and the pressure at the nozzle exit pe. The thrust that is produced by a nozzle is calculated by [2]: 0 ( ) n e e e T mv p p A = + − 
+
+
+To determine the dimensions of the nozzle the following assumptions are made: The diverging part of the nozzle has a half angle (α) in between 15° and 20°.
+
+
+A larger angle can cause rupture of the boundary layer and can result in shockwaves reducing the accuracy significantly. The converging part of the nozzle has a half angle of 30°. 
+
+
+The converging part guides the gas towards the nozzle throat where it reaches Mach 1. Abrupt changes in the geometry should be avoided since it causes the thickness of the boundary layer to increase, and thereby reducing efficiency. MST is based on techniques to shape silicon and glass substrates. 
+
+
+
+
+Upper limit                   Lower limit  
+20° half angle                15° half angle
+Throat diameter (dthroat)     131µm    90µm
+Exit diameter                 422µm    304µm
+Thrust @ 4.5bar               10mN     4.72mN
+Thrust @ 1bar                 2.2mN     1.0mN
+Expansion ratio               10.4      11.4
+Mach-number                   4        4.1
+
+
+
+
+	
+
+Valve An active normally closed valve is required to be able to accurately control the amount of propulsion. There are three main requirements that should be met: 
+
+
+1. The leakage of the valve in the closed state should be smaller than 1.6·10-4 sccm as is earlier addressed. An in depth discussion about the leakage.
+
+
+ 2. In the open state the area of passage should be at least 3 times higher than the nozzle throat area to avoid choked flow in the valve instead of in the nozzle. 
+3. The valve should open and close within 1ms. 
+
+
+
+
+  
+
+  
+
+The baseline package of the modular platform is a glass tube bonded on silicon. Figure 3-3 shows the glass tube with a silicon component underneath it. This silicon component can contain any functionality according to the requirements of the system. In our case it is the valve module which is described in chapter 5. The glass tube is a convenient package because it is easily attached to silicon or other glass like materials by fusion bonding. It is functioning as a hermetically sealed package, fluidic interconnect as well as a macro support for the fragile MST components.
+  
+
+The glass tube is fixed on the MST part by fusion bonding at elevated temperature . First the glass tubes are diced to the right length and the bonding surface is polished. Just before fusion bonding the glass tube is ultrasonically cleaned in ethanol. The glass tube is positioned on top of the clean silicon valve. The heat treatment is done in a Nabertherm LH 15/12 furnace in an air environment. The unit is heated up to 790°C, maintained at this temperature for 30 minutes, after which it is gradually cooled down resulting in a hermetic seal between the glass tube and the silicon.
+
+
+The first fabrication method that is explored is deep reactive ion etching (DRIE), where plasma is used that consists of ionic and reactive (radical) species which are important in the etching of silicon [4]. The technique is used to make high aspect ratio features in silicon which is especially interesting for MST devices. An SF6 plasma is used from which the reactive species etch silicon in an isotropic manner. A gas is added which forms an etch inhibiting layer, also called passivation layer, on the etching surface. The inhibiting layer is selectively removed from the bottom of the etching surface by introducing a bias voltage, driving the ionic species directionally towards the wafer surface. Since the inhibiting layer is not removed from the sidewall, etching only occurs in the bottom of a feature and in this way directionality is obtained. 
+
+
+Functions: a region where the plasma is highly conductive and rich of ions and radicals due to electronic impact. In between the plasma glow and the silicon a sheath is present where there is a depletion of electrons which prevents the plasma to exist and gives it insulating properties; i.e. the dark space. When a bias voltage is applied strong electrical fields develop in the sheath causing ions to accelerate from the plasma and glow straight towards the etching surface. The first effect that is explored to obtain a negative tapered profile is the ion angular distribution (IAD). Because of the collisions of ions with other species and their thermal motion in the plasma glow, ion dispersion will occur (Figure 4-5). At high pressure the ions encounter many collisions with gas molecules while travelling through the dark space. These collisions result in a flux of ions towards the silicon which is not perpendicular to the wafer surface. At a pressure of 10Pa, where the mean free path between collisions is 0.2mm for SF6 at 300K, the ions which arrive at the silicon surface are distributed over an angle of 30°. The degree of collimation of the ion flux is expressed in the ion angular distribution (IAD) function. The anchor points should be small in area to reduce the chance that particles get stuck in this part of the valve. When this happens the membrane is not pulled over the valve seat resulting in leakage as is depicted in Figure 5-11. This is a weak point in the design of the valve, but we can design in such a way that it is not favorable for a particle to stay in this position as explained later on. If these anchor points were to be left out the boss is pulled into the outlet due to the pressure difference. The membrane is then stretched too much and might break.
+  
+
+
+
+Theory of Waves in a Cold Uniform Plasma:
+
+
+Te=Ti=0,the waves can easily be generalized to an arbitrary number of charged particle species and an arbitrary angle of propagation θ relative to the magnetic field. Waves that depend on finite T, such as ion acoustic waves, are not included in this treatment. First, we define the dielectric tensor of a plasma as follows. The fourth Maxwell equation is ∇ B¼μ0 jþE0 
+
+
+ Thus the effective dielectric constant the plasma is the tensor e¼E0 Iþiσ=E0ω ð Þ
+
+
+Waves-angles: setting θ=0 and90 .When θ=0 , there are three roots: P=0 (Langmuir wave), μ2=R (R wave), and μ2=L (L wave). When θ=90 , there are two roots: μ2=RL/S (extraordinary wave) and μ2=P (ordinary wave). 
+
+
+ The resonance frequencies depend on angle θ.Ifθ=0 , the possible solutions are P=0 and S=1. The former is the plasma resonance ω=ωp, while the latter occurs when either R=1 (electron cyclotron resonance) or L=1 (ion cyclotron resonance). If θ=90 , the possible solutions are P=1 or S=0. The former cannot occur for finite ωp and ω, and the latter yields the upper and lower hybrid frequencies, as well as the two-ion hybrid frequency when there is more than one ion species.  In the toroidal plasma shown, the diamagnetic current flows mainly in the direction (A) þ^ ϕ (B) ^ ϕ (C) þ^ θ (D) ^ θ (E) þ^
+  
+
+
+
+The mechanical area can be increased by adding valve seats or by increasing the distance between the valve seats. When assuming a viscous flow, particles travel in a straight line inwards to the outlet in radial direction. The time that particles spend above the valve seat pattern is then linearly dependent on the difference between the outer- and inner radius of the valve seat area. Thus, for a larger valve seat area, particles reside longer in this area, increasing the chance that they get trapped under the membrane. But since the area increases with the square of the radius, a doubling of the outer radius would mean that the amount of particles that can be encapsulated becomes four times larger. Thus, increasing the valve seat area works in favor. However, when looking at this from a fabrication perspective; the larger the membrane which covers the valve seat area, the weaker its strength. The size of the valve seat area is constrained by the membrane strength. 
+  
+
+
+
+The average electron velocity (A) Maxwellian plasma is
+7 102 m/s (B) 7 104 m/s
+ (C) 7 105 m/s
+ (D) 7 106 m/s 
+(E) 7 107 m/s v j j in a 10-keV 
+
+
+Variables:  (A) Cyclotron resonance heating (B) Adiabatic compression (C) Ohmic heating (D) Transit time magnetic pumping (E) Neoclassical transport.
+
+
+Any periodic motion of a fluid can be decomposed by Fourier analysis into a superposition of sinusoidal oscillations with different frequencies ω and wavelengths λ. 
+
+
+A simple wave is any one of these components. When the oscillation amplitude is small, the waveform is generally sinusoidal; and there is only one component. This is the situation we shall consider. A Sinusoidally oscillating quantity—say, the density n—can be represented as follows: n ¼nexp i k r ωt ð Þ.
+
+
+Valve dimensions: Spiral spring dimensions There are a couple of constraints regarding the dimensions of the valve. In chapter 2 a design guideline has been derived for the maximum force that is allowed in the open state of the valve. The valve is open when the membrane is pulled upwards for a distance of 16.8µm and the allowed force to do this is 0.3N. 
+
+
+The spring constant should be as such that this restriction is met. By using Hooke’s law the spring constant is calculated: F p = − = F kδ s (5.3) Where Fs is the force exerted by the spring, k is the spring constant and δ the deflection. Fp is the force the piezo-disk has to deliver against the spring. The calculated spring constant is then 0.3/16.8 10− ⋅ 6 =18kNm-1. The stiffness of the spiral spring for pure bending is calculated by: 3 = K nEv l   t s s     s (5.4) 
+
+
+Design of membranes for valbels/plasma: 1) On a <110> 380µm thick silicon wafer a six layer stack is applied. The first layer is a thermally grown 160 nm thick SiO2 layer and has multiple functions. First of all it is the protection layer for the silicon bonding surface. Second, it is used as a stop layer for several etch steps as shown later on. The next three layers are part of the membrane; it is the Si3N4–SiO2–Si3N4 stack. Both Si3N4 layers are 60nm thick and deposited by LPCVD at 850°C.
+
+
+ In between the Si3N4 layers a SiO2 layer is present to compensate for the tensile stress in the Si3N4. Therefore we use an annealed TEOS layer which has 0.29GPa compressive stress. The thickness of this layer is 245 nm. On top of the Si3N4–SiO2–Si3N4 stack a 100 nm thick layer of polysilicon is deposited and approximately 10 nm of this layer is oxidized. 2) The polysilicon oxide is patterned on the backside to define the membrane. 3) Then a couple of wet etch steps are done. First the polysilicon layer is etched in a TMAH solution with the thin 10nm oxide layer as a mask. The Si3N4 is etched in a H3PO4 solution followed by SiO2 etching in 1% HF. Finally, the second Si3N4 layer is etched, again in H3PO4, and the underlying SiO2 layer prevents further etching. The typical isotropic shape of wet etched layers is depicted. 4) The poly silicon mask layer is stripped in TMAH and a photo-resist layer is spin-coated and patterned on the topside of the wafer. This photo-resist layer is used as a mask for the DRIE step. The backside is protected with another photoresist layer. 5) The wafer is etched through by DRIE. Then the photo-resist is removed in HNO3. The wafer is cleaned and the fluorocarbon residue is burned at 800°C. Just before bonding the protective SiO2 layer is stripped in 1% HF and any last residue is lifted off. In this step also the SiO2 on the topside of the membrane is removed leaving only the Si3N4–SiO2–Si3N4 stack. 
+
+
+Variables for the plasma structure;
+The phase velocity of a wave in a plasma often exceeds the velocity of light c.This does not violate the theory of relativity, because an infinitely long wave train of constant amplitude cannot carry information. The carrier of a radio wave, for instance, carries no information until it is modulated. The modulation information does not travel at the phase velocity but at the group velocity, which is always less than c. To illustrate this, we may consider a modulated wave formed by adding (“beating”) two waves of nearly equal frequencies. Let these waves be E1 ¼ E0cos kþΔk ð Þ ωþΔω ð Þt ½ ð4: E2 ¼ E0cos k Δk ð Þx ω Δω ½ ð Þt.
+  
+
+
+
+The fabrication starts with the shaping of some anchor points for the final Si3N4 SiO2–Si3N4 membrane. This is the mechanical constraint which ensures that the Si3N4 cannot release its stress at high temperature. 1) On the backside of a <110> 380µm thick silicon wafer a photo-resist layer is patterned to determine the mechanical anchor. The silicon is etched by DRIE for a depth of 20µm and the fluorocarbon residue is removed. 2) Then, the wafer is covered with a 495 nm thick TEOS layer. This layer is not annealed and thus the stress is close to zero. 3) On the backside of the wafer a layer of photo-resist is spin-coated and the topside TEOS layer is removed in 1% HF. 4) Subsequently, a layer of photo-resist is spin-coated on the topside and patterned to define the membrane. The wafer is etched through by DRIE and we selectively stop on the TEOS layer.
+
+
+
+
+Futuristic spacecraft inspired by SpaceX Falcon 9 with plasma and alternative fuel propulsion, composite fuselage, VASIMR engine, radiation shielding, and FPGA-based control sensors. Includes jet engine components and thermal systems, designed for operation in weak atmospheres and high-radiation space environments.
+
+
+  
+
+
+
+ Design: A composite fuselage with high thermal and radiation shielding for operation in environments with weakened atmospheres and intense solar radiation. Integrate components like the Merlin-D engine, cold gas thrusters for satellite formation flying, and VASIMR (Variable Specific Impulse Magnetoplasma Rocket) propulsion. Include structural documentation-style labels on the jet engine components: diffuser, compressor, combustion chamber, turbine, and nozzle. Show sensor arrays connected to FPGA-based MicroBlaze processors (Vivado/Xilinx) with VHDL-based control. Emphasize futuristic, modular engineering capable of surviving extreme natural disasters or long-term cosmic exposure, with radiator systems, ion cyclotron heating coils, and magnetic confinement fields visible. Design should be grounded in realistic aerospace engineering and include elements like thermal control systems, fuel injectors, and plasma exhaust nozzles
+
+
+  
+
+
+
+Display technical labels with real names like "RF PPU 48 kW," "ICRH Booster," or "Specific Impulse: 5000s."
+Add visual effects of blue or purple plasma streams exiting VASIMR thrusters.
+Include materials with advanced textures: ceramics, lightweight metal alloys, and anti-radiation coatings.
+
+
+  
+
+  
+
+
+
+ This is a sinusoidally modulated wave (Fig. 4.1). The envelope of the wave, given by cos [(Δk)x (Δω)t], is what carries information; it travels at velocity Δω/Δk. Taking the limit Δω!0, we define the group velocity to be vg ¼ dω=dk
+  
+
+
+
+
+
+
+
+
+
+Final design: 
+  
+
+Plasma Oscillations ð4:10Þ If the electrons in a plasma are displaced from a uniform background of ions, electric fields will be built up in such a direction as to restore the neutrality of the plasma by pulling the electrons back to their original positions. Because of their inertia, the electrons will overshoot and oscillate around their equilibrium positions with a characteristic frequency known as the plasma frequency. This oscillation is so fast that the massive ions do not have time to respond to the oscillating field and may be considered as fixed. In Fig. 4.2, the open rectangles represent typical elements of the ion fluid, and the darkened rectangles the alternately displaced elements of the electron fluid. The resulting charge bunching causes a spatially periodic E field, which tends to restore the electrons to their neutral positions. Weshall derive an expression for the plasma frequency ωp in the simplest case, making the following assumptions: (1) There is no magnetic field; (2) there are no thermal motions (KT¼0); (3) the ions are fixed in space in a uniform distribution; (4) the plasma is infinite in extent; and (5) the electron motions occur only in the x direction. As a consequence of the last assumption, we have ∇¼^ x∂=∂x E¼E^ x ∇ E¼0 E¼ ∇ϕ
+
+
+Design:
+=================== ADVANCED SPACECRAFT SYSTEM SCRIPT ===================
+
+
+MISSION PROFILE:
+Design a next-generation spacecraft inspired by the SpaceX Falcon 9,
+equipped with plasma-based propulsion and alternative fuel systems for
+operations in weak atmospheres and high-radiation planetary environments.
+
+
+VISUAL ENVIRONMENT:
+- Background: Low Earth orbit or eroded planetary surface (solar storm damage)
+- Plasma Effects: Blue/purple magnetic exhaust jets from VASIMR thrusters
+- Materials: High-detail composites with ceramic, titanium alloy, and
+  radiation-shield coatings
+- Technical Labels: e.g. "RF PPU 48 kW", "ICRH Booster", "Specific Impulse: 5000s"
+
+
+STRUCTURAL COMPONENTS:
+- Composite Fuselage: Advanced radiation/thermal shielding
+- Modular Hull Sections: For maintenance under disaster-resilient conditions
+- Surface Wear: Simulated micrometeorite abrasion and solar weathering
+
+
+PROPULSION SYSTEM:
+- Main Engine: Merlin-D (chemical ignition)
+- Plasma Drive: VASIMR (Variable Specific Impulse Magnetoplasma Rocket)
+- Cold Gas Thrusters: Formation flying and station-keeping
+
+
+PROPULSION DETAILS:
+- Plasma Source: Ionized helium or argon
+- Booster Stage: ICRH (Ion Cyclotron Resonance Heating)
+- Exhaust Nozzle: Magnetic channeling with visible plasma flux
+- Specific Impulse: Up to 5000 seconds in high-power mode
+
+
+AVIONICS & CONTROL:
+- FPGA Platform: Xilinx Vivado with MicroBlaze processors
+- Language: VHDL-based dynamic control systems
+- Functions: Sensor fusion, attitude control, telemetry routing
+- Architecture: Fault-tolerant, reprogrammable for deep-space adaptation
+
+
+THERMAL SYSTEMS:
+- Radiators: Graphene-based heat exchangers
+- Cooling Loops: Dual-phase liquid for high-load operations
+- Range: -130°C to +190°C
+
+
+ENGINEERING GOALS:
+- Survive long-term cosmic exposure and natural disasters
+- Realistic, modular systems for manned or unmanned missions
+- Visual realism suitable for documentation, simulation, or cinematic output
+
+
+=========================================================================
