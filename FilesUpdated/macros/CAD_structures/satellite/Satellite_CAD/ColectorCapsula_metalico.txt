@@ -1,0 +1,361 @@
+# -*- coding: utf-8 -*-
+# High-T Capsule Collector – FreeCAD Macro
+# Cápsula multilámina con TPS estilo Parker: C/C hot-face + aislamiento + casco estructural,
+# admisión estrecha-profunda, filtro de plasma, thruster iónico principal, radiadores curvos,
+# manifolds y piping. Incluye metadatos de materiales y Tmax. Exporta STEP AP214.
+
+import math
+import FreeCAD as App
+import Part
+
+# ===================== Parámetros (mm) y diseño térmico =====================
+# Geometría base (alargada)
+caps_rad      = 105.0      # radio externo
+caps_cyl_len  = 360.0      # más alargada
+# Capas del casco (externo → interno)
+t_hotface     = 6.0        # C/C (hot face)
+t_insul       = 22.0       # aislamiento (aerogel / carbon foam)
+t_struct      = 4.0        # casco estructural (Ti-alloy / Inconel)
+# Anillos internos de rigidez
+rib_ring_r    = 2.0
+n_ribs        = 5
+
+# Admisión (estrecha y profunda)
+intake_d         = 120.0
+intake_depth     = 130.0
+intake_wall_hot  = 3.0     # hot-face cúpula
+intake_wall_ins  = 10.0    # aislamiento cúpula
+intake_lip_r     = 2.2     # toro de labio (C/C)
+cond_disc_t      = 2.2
+cond_disc_pitch  = 18.0
+cond_n_discs     = 5
+
+# Filtro de plasma
+filter_len     = 120.0
+filter_r_out   = 60.0
+filter_wall_t  = 3.0
+filter_pack_n  = 7
+filter_pack_t  = 3.5
+filter_pack_gap= 8.0
+
+# Thruster iónico
+thruster_len          = 160.0
+thruster_body_r       = 62.0
+thruster_nozzle_d     = 180.0
+thruster_nozzle_depth = 120.0
+thruster_wall_t       = 2.4
+rcs_small_n           = 4
+
+# Radiadores curvos abrazando casco
+rad_angle_deg   = 110.0
+rad_gap_from_hull = 10.0
+rad_radial_t    = 6.0
+rad_len_x       = 280.0
+rad_n_panels    = 2   # 1=±Y, 2=±Y y ±Z
+
+# Manifolds y tubería
+manifold_r_tube  = 6.0
+manifold_front_x = +caps_cyl_len/2.0 - 14.0
+manifold_mid_x   = 0.0
+pipe_r           = 4.0
+
+# Tanques y bombas
+tank_r   = 36.0
+tank_len = 180.0
+pump_blk = (44.0, 28.0, 26.0)
+
+# Propiedades térmicas de diseño (metadatos)
+Tmax_hotface = 1000  # °C
+Tmax_insul   = 800   # °C (cara caliente), >200 °C cara fría
+Tmax_struct  = 650   # °C
+
+# Exportación
+export_path = App.getUserAppDataDir() + "HighT_CapsuleCollector.step"
+
+# ===================== Utilidades =====================
+def place_shape(shape, pos=App.Vector(0,0,0), rot_axis=App.Vector(0,1,0), rot_deg=0):
+    sh = shape.copy()
+    pl = App.Placement()
+    pl.Rotation = App.Rotation(rot_axis, rot_deg)
+    pl.Base = pos
+    sh.Placement = pl
+    return sh
+
+def add_part(doc, shape, name, color=(0.8,0.8,0.8), transparency=0, mat=None):
+    if shape is None: return None
+    obj = doc.addObject("Part::Feature", name)
+    obj.Shape = shape
+    try:
+        obj.ViewObject.ShapeColor = color
+        obj.ViewObject.Transparency = int(max(0, min(100, round(transparency*100))))
+    except Exception:
+        pass
+    # Metadatos de material
+    if mat:
+        try:
+            obj.addProperty("App::PropertyString","Material").Material = mat.get("name","")
+            obj.addProperty("App::PropertyString","MaterialNotes").MaterialNotes = mat.get("notes","")
+            obj.addProperty("App::PropertyInteger","TmaxC").TmaxC = int(mat.get("TmaxC",0))
+        except Exception:
+            pass
+    return obj
+
+def make_revolved_solid_from_diameter(d, depth, steps=128, z0_eps_factor=1.0):
+    if d <= 0 or depth <= 0:
+        return None
+    f = (d*d) / (16.0*depth)
+    def r(z): return math.sqrt(max(0.0, 4.0*f*z))
+    steps = max(48, int(steps))
+    z0 = depth / (steps * z0_eps_factor)
+    p_axis_bot = App.Vector(0, 0, z0)
+    p_axis_top = App.Vector(0, 0, depth)
+    e_axis = Part.makeLine(p_axis_bot, p_axis_top)
+    p_top_out = App.Vector(r(depth), 0, depth)
+    e_top = Part.makeLine(p_axis_top, p_top_out)
+    outer_pts = []
+    for i in range(steps+1):
+        z = depth - (depth - z0) * (i/steps)
+        outer_pts.append(App.Vector(r(z), 0, z))
+    e_curve = Part.makePolygon(outer_pts)
+    p_bot_out = outer_pts[-1]
+    e_bot = Part.makeLine(p_bot_out, p_axis_bot)
+    wire = Part.Wire([e_axis, e_top, e_curve, e_bot])
+    face = Part.Face(wire)
+    return face.revolve(App.Vector(0,0,0), App.Vector(0,0,1), 360)
+
+def make_shell_from_revolve(d, depth, t, steps=128):
+    outer = make_revolved_solid_from_diameter(d, depth, steps)
+    d_inner = max(0.1, d - 2.0*t)
+    inner = make_revolved_solid_from_diameter(d_inner, depth, steps)
+    return outer.cut(inner)
+
+def make_ring(r_outer, r_inner, h):
+    outer = Part.makeCylinder(r_outer, h)
+    inner = Part.makeCylinder(r_inner, h)
+    return outer.cut(inner)
+
+def make_capsule_body(R):
+    # Cuerpo cilíndrico + hemisferios
+    cyl = Part.makeCylinder(R, caps_cyl_len, App.Vector(-caps_cyl_len/2.0,0,0), App.Vector(1,0,0))
+    s_front = Part.makeSphere(R); s_front.translate(App.Vector(+caps_cyl_len/2.0,0,0))
+    s_back  = Part.makeSphere(R); s_back.translate(App.Vector(-caps_cyl_len/2.0,0,0))
+    box_front = Part.makeBox(R*2.2, R*2.2, R*2.2); box_front.translate(App.Vector(+caps_cyl_len/2.0, -R*1.1, -R*1.1))
+    box_back  = Part.makeBox(R*2.2, R*2.2, R*2.2); box_back.translate(App.Vector(-caps_cyl_len/2.0 - R*2.2, -R*1.1, -R*1.1))
+    hemi_front = s_front.common(box_front)
+    hemi_back  = s_back.common(box_back)
+    return cyl.fuse([hemi_front, hemi_back])
+
+def make_capsule_layer(R_outer, thickness):
+    # Capa como (outer - inner) manteniendo espesor en hemisferios y cilindro
+    outer = make_capsule_body(R_outer)
+    R_inner = max(1.0, R_outer - thickness)
+    # Inner se recorta para dejar espesor constante
+    inner = make_capsule_body(R_inner)
+    return outer.cut(inner)
+
+def add_standoffs_ring(doc, x_pos, R_from, R_to, n=8, r=2.4, color=(0.75,0.75,0.78), mat=None):
+    objs=[]
+    L = abs(R_to - R_from)
+    for a in range(n):
+        ang = a*(360.0/n)
+        y = R_from*math.cos(math.radians(ang))
+        z = R_from*math.sin(math.radians(ang))
+        axis = App.Vector(0, math.cos(math.radians(ang)), math.sin(math.radians(ang)))
+        st = Part.makeCylinder(r, L, App.Vector(x_pos, y, z), axis)
+        objs.append(add_part(doc, st, f"Standoff_{int(x_pos)}_{a}", color=color, transparency=0, mat=mat))
+    return objs
+
+# ===================== Subconjuntos (con materiales) =====================
+def build_capsule_multilayer(doc):
+    objs = []
+    # Capa 1: Hot-face (C/C)
+    hot = make_capsule_layer(caps_rad, t_hotface)
+    o1 = add_part(doc, hot, "Shell_HotFace", color=(0.15,0.15,0.16), transparency=0,
+                  mat={"name":"Carbon-Carbon (C/C)", "TmaxC":Tmax_hotface, "notes":"Hot-face TPS; ablativo/RCG opcional"})
+    objs.append(o1)
+    # Capa 2: Aislamiento (Aerogel / Carbon foam)
+    ins = make_capsule_layer(caps_rad - t_hotface, t_insul)
+    o2 = add_part(doc, ins, "Shell_Insulation", color=(0.95,0.88,0.55), transparency=70/100.0,
+                  mat={"name":"Silica aerogel / Carbon foam", "TmaxC":Tmax_insul, "notes":"Aislamiento de baja k; ventilado hacia radiadores"})
+    objs.append(o2)
+    # Capa 3: Estructural (Ti / Inconel)
+    struct = make_capsule_layer(caps_rad - t_hotface - t_insul, t_struct)
+    o3 = add_part(doc, struct, "Shell_Structural", color=(0.50,0.54,0.60), transparency=0,
+                  mat={"name":"Ti-6Al-4V / Inconel 718", "TmaxC":Tmax_struct, "notes":"Casco portante; puntos de anclaje internos"})
+    objs.append(o3)
+    # Anillos internos de rigidez (toros delgados)
+    R_in = caps_rad - t_hotface - t_insul - 6.0
+    for i in range(n_ribs):
+        x = -caps_cyl_len/2.0 + (i+1)*(caps_cyl_len/(n_ribs+1))
+        tor = Part.makeTorus(R_in, rib_ring_r)
+        tor = place_shape(tor, rot_axis=App.Vector(0,1,0), rot_deg=-90)
+        tor.translate(App.Vector(x, 0, 0))
+        objs.append(add_part(doc, tor, f"Rib_{i}", color=(0.55,0.58,0.62), transparency=0,
+                             mat={"name":"Ti-6Al-4V", "TmaxC":450, "notes":"Anillo de rigidez"}))
+    return objs
+
+def build_intake_TPS(doc):
+    objs=[]
+    nose_x = +caps_cyl_len/2.0
+
+    # Cúpula paraboloidal por capas: hot-face + aislamiento
+    bell_hot = make_shell_from_revolve(intake_d, intake_depth, intake_wall_hot, steps=160)
+    bell_hot = place_shape(bell_hot, rot_axis=App.Vector(0,1,0), rot_deg=-90); bell_hot.translate(App.Vector(nose_x,0,0))
+    objs.append(add_part(doc, bell_hot, "IntakeBell_HotFace", color=(0.18,0.18,0.20), transparency=0,
+                         mat={"name":"C/C TPS", "TmaxC":Tmax_hotface, "notes":"Cúpula hot-face admisión"}))
+    bell_ins = make_shell_from_revolve(intake_d - 2*intake_wall_hot, intake_depth-0.5, intake_wall_ins, steps=160)
+    bell_ins = place_shape(bell_ins, rot_axis=App.Vector(0,1,0), rot_deg=-90); bell_ins.translate(App.Vector(nose_x,0,0))
+    objs.append(add_part(doc, bell_ins, "IntakeBell_Insulation", color=(0.94,0.88,0.60), transparency=60/100.0,
+                         mat={"name":"Aerogel", "TmaxC":Tmax_insul, "notes":"Aislamiento cúpula"}))
+
+    # Labio toroidal (C/C)
+    lip = Part.makeTorus(intake_d/2.0, intake_lip_r)
+    lip = place_shape(lip, rot_axis=App.Vector(0,1,0), rot_deg=-90); lip.translate(App.Vector(nose_x + intake_depth, 0, 0))
+    objs.append(add_part(doc, lip, "IntakeLip", color=(0.22,0.22,0.24), transparency=0,
+                         mat={"name":"C/C Bumper", "TmaxC":Tmax_hotface, "notes":"Protección de borde"}))
+
+    # Discos de condensación (cerámicos / metálicos)
+    for i in range(cond_n_discs):
+        x_i = nose_x + 12.0 + i*cond_disc_pitch
+        r_out = intake_d/2.0 - 6.0 - i*2.0
+        r_in  = max(10.0, r_out - 10.0)
+        ring = make_ring(r_out, r_in, cond_disc_t)
+        ring = place_shape(ring, rot_axis=App.Vector(0,1,0), rot_deg=-90); ring.translate(App.Vector(x_i, 0, 0))
+        objs.append(add_part(doc, ring, f"Condenser_{i}", color=(0.90,0.92,0.96), transparency=0,
+                             mat={"name":"Alúmina/BN con recubrimiento Au", "TmaxC":700, "notes":"Disco de condensación iónica"}))
+    return objs
+
+def build_plasma_filter(doc):
+    objs=[]
+    x0 = +caps_cyl_len/2.0 - intake_depth - 40.0 - filter_len/2.0
+    outer = Part.makeCylinder(filter_r_out, filter_len, App.Vector(x0 - filter_len/2.0, 0, 0), App.Vector(1,0,0))
+    inner = Part.makeCylinder(max(4.0, filter_r_out - filter_wall_t), filter_len, App.Vector(x0 - filter_len/2.0, 0, 0), App.Vector(1,0,0))
+    shell = outer.cut(inner)
+    objs.append(add_part(doc, shell, "PlasmaFilterShell", color=(0.62,0.66,0.72), transparency=0,
+                         mat={"name":"Inconel 718 / Ti", "TmaxC":650, "notes":"Carcasa filtro plasma"}))
+    for i in range(filter_pack_n):
+        xi = x0 - filter_len/2.0 + 10.0 + i*(filter_pack_t + filter_pack_gap)
+        disc = Part.makeCylinder(filter_r_out - 10.0, filter_pack_t, App.Vector(xi, 0, 0), App.Vector(1,0,0))
+        objs.append(add_part(doc, disc, f"FilterPack_{i}", color=(0.80,0.82,0.86), transparency=0,
+                             mat={"name":"Cerámica dieléctrica (Al2O3/BN)", "TmaxC":800, "notes":"Cartucho/etapa filtro"}))
+    return objs
+
+def build_thruster(doc):
+    objs=[]
+    tail_x = -caps_cyl_len/2.0
+    # Cuerpo
+    body = Part.makeCylinder(thruster_body_r, thruster_len*0.5, App.Vector(tail_x - thruster_len*0.5, 0, 0), App.Vector(-1,0,0))
+    objs.append(add_part(doc, body, "ThrusterBody", color=(0.56,0.58,0.62), transparency=0,
+                         mat={"name":"Ti-6Al-4V / Inconel", "TmaxC":650, "notes":"Estructura thruster"}))
+    # Tobera grande (C/C o grafito)
+    nozzle = make_shell_from_revolve(thruster_nozzle_d, thruster_nozzle_depth, thruster_wall_t, steps=160)
+    nozzle = place_shape(nozzle, rot_axis=App.Vector(0,1,0), rot_deg=90); nozzle.translate(App.Vector(tail_x - thruster_len*0.5, 0, 0))
+    objs.append(add_part(doc, nozzle, "MainNozzle", color=(0.22,0.22,0.24), transparency=0,
+                         mat={"name":"C/C / Grafito reforzado", "TmaxC":1200, "notes":"Tobera principal alta T"}))
+    # Auxiliares
+    for i in range(rcs_small_n):
+        ang = i*(360.0/rcs_small_n)
+        rad = thruster_body_r + 12.0
+        y = rad*math.cos(math.radians(ang)); z = rad*math.sin(math.radians(ang))
+        cone = Part.makeCone(7.0, 2.5, 22.0)
+        cone = place_shape(cone, rot_axis=App.Vector(0,1,0), rot_deg=90); cone.translate(App.Vector(tail_x - 30.0, y, z))
+        objs.append(add_part(doc, cone, f"AuxNozzle_{i}", color=(0.30,0.30,0.34), transparency=0,
+                             mat={"name":"C/C", "TmaxC":900, "notes":"Tobera auxiliar"}))
+    return objs
+
+def make_annular_sector_face(R_out, R_in, theta_deg, nseg=64):
+    theta = math.radians(theta_deg); half = theta/2.0
+    pts=[]
+    for i in range(nseg+1):
+        ang = -half + (theta*i/nseg)
+        y = R_out*math.cos(ang); z = R_out*math.sin(ang)
+        pts.append(App.Vector(0,y,z))
+    for i in range(nseg, -1, -1):
+        ang = -half + (theta*i/nseg)
+        y = R_in*math.cos(ang); z = R_in*math.sin(ang)
+        pts.append(App.Vector(0,y,z))
+    wire = Part.Wire(Part.makePolygon(pts+[pts[0]]))
+    return Part.Face(wire)
+
+def build_curved_radiators(doc):
+    objs=[]
+    R_out = caps_rad + rad_gap_from_hull + rad_radial_t
+    R_in  = R_out - rad_radial_t
+    sector_face = make_annular_sector_face(R_out, R_in, rad_angle_deg, nseg=72)
+    panel = sector_face.extrude(App.Vector(rad_len_x, 0, 0)); panel.translate(App.Vector(-rad_len_x/2.0, 0, 0))
+    matRad = {"name":"C/C aletas + heatpipes Mo/Re", "TmaxC":900, "notes":"Radiador curvo alta T"}
+
+    pY = add_part(doc, panel, "Radiator_PosY", color=(0.78,0.80,0.84), transparency=0, mat=matRad)
+    nY = add_part(doc, place_shape(panel, rot_axis=App.Vector(1,0,0), rot_deg=180), "Radiator_NegY", color=(0.78,0.80,0.84), transparency=0, mat=matRad)
+    objs += [pY,nY]
+    if rad_n_panels >= 2:
+        pZ = add_part(doc, place_shape(panel, rot_axis=App.Vector(1,0,0), rot_deg=90),  "Radiator_PosZ", color=(0.78,0.80,0.84), transparency=0, mat=matRad)
+        nZ = add_part(doc, place_shape(panel, rot_axis=App.Vector(1,0,0), rot_deg=-90), "Radiator_NegZ", color=(0.78,0.80,0.84), transparency=0, mat=matRad)
+        objs += [pZ,nZ]
+    # Standoffs cerámicos entre casco y radiadores (en plano X = manifold_mid_x)
+    matCer = {"name":"Cerámica (Al2O3/Si3N4)", "TmaxC":1000, "notes":"Soporte con baja conductividad"}
+    objs += add_standoffs_ring(doc, manifold_mid_x, caps_rad, R_in, n=12, r=2.2, color=(0.85,0.85,0.88), mat=matCer)
+    return [o for o in objs if o is not None]
+
+def build_manifolds_and_pipes(doc):
+    objs=[]
+    R_man = caps_rad - 12.0
+    matMan = {"name":"Aleación Cu (HP) / Ti", "TmaxC":400, "notes":"Manifold térmico con heatpipes"}
+    tor_front = Part.makeTorus(R_man, manifold_r_tube)
+    tor_front = place_shape(tor_front, rot_axis=App.Vector(0,1,0), rot_deg=-90); tor_front.translate(App.Vector(manifold_front_x, 0, 0))
+    objs.append(add_part(doc, tor_front, "ThermalManifoldFront", color=(0.80,0.76,0.40), transparency=0, mat=matMan))
+
+    tor_mid = Part.makeTorus(R_man, manifold_r_tube)
+    tor_mid = place_shape(tor_mid, rot_axis=App.Vector(0,1,0), rot_deg=-90); tor_mid.translate(App.Vector(manifold_mid_x, 0, 0))
+    objs.append(add_part(doc, tor_mid, "ThermalManifoldMid", color=(0.80,0.76,0.40), transparency=0, mat=matMan))
+
+    # Tubería principal admisión → filtro → thruster
+    x_intake_out = +caps_cyl_len/2.0 + 12.0 + (cond_n_discs-1)*cond_disc_pitch
+    x_filter_ctr = +caps_cyl_len/2.0 - intake_depth - 40.0
+    x_thr_before = -caps_cyl_len/2.0 - 10.0
+    pipe1 = Part.makeCylinder(pipe_r, abs(x_filter_ctr - x_intake_out), App.Vector(min(x_filter_ctr, x_intake_out), 0, 0), App.Vector(1,0,0))
+    objs.append(add_part(doc, pipe1, "Pipe_IntakeToFilter", color=(0.74,0.78,0.82), transparency=0,
+                         mat={"name":"Ti/SS316L", "TmaxC":500, "notes":"Línea principal (fría→templada)"}))
+    pipe2 = Part.makeCylinder(pipe_r, abs(x_filter_ctr - x_thr_before), App.Vector(min(x_filter_ctr, x_thr_before), 0, 0), App.Vector(1,0,0))
+    objs.append(add_part(doc, pipe2, "Pipe_FilterToThruster", color=(0.74,0.78,0.82), transparency=0,
+                         mat={"name":"Inconel 625", "TmaxC":800, "notes":"Línea templada→caliente"}))
+    return objs
+
+def build_tanks_and_pumps(doc):
+    objs=[]
+    x_ctr = -20.0
+    for sgn in (+1,-1):
+        base = App.Vector(x_ctr, -tank_len/2.0, sgn*(caps_rad - t_hotface - t_insul - t_struct - tank_r - 10.0))
+        tank = Part.makeCylinder(tank_r, tank_len, base, App.Vector(0,1,0))
+        objs.append(add_part(doc, tank, f"HydrogenTank_{'Top' if sgn>0 else 'Bottom'}", color=(0.86,0.88,0.92), transparency=0,
+                             mat={"name":"Ti liner / CFRP overwrap", "TmaxC":150, "notes":"Tanque criogénico protegido del calor"}))
+    px,py,pz = pump_blk
+    for sgn in (+1,-1):
+        blk = Part.makeBox(px, py, pz)
+        blk.translate(App.Vector(x_ctr - px/2.0 - 16.0, -py/2.0, sgn*(caps_rad - t_hotface - t_insul - pz/2.0 - 12.0)))
+        objs.append(add_part(doc, blk, f"PumpBlock_{'Top' if sgn>0 else 'Bottom'}", color=(0.92,0.82,0.54), transparency=0,
+                             mat={"name":"Bombas Ti/SS", "TmaxC":250, "notes":"Conexión a radiadores"}))
+    return objs
+
+# ===================== Ensamblaje y exportación =====================
+def main():
+    doc = App.newDocument("HighT_CapsuleCollector")
+    objs=[]
+    objs += build_capsule_multilayer(doc)
+    objs += build_intake_TPS(doc)
+    objs += build_plasma_filter(doc)
+    objs += build_thruster(doc)
+    objs += build_curved_radiators(doc)
+    objs += build_manifolds_and_pipes(doc)
+    objs += build_tanks_and_pumps(doc)
+
+    doc.recompute()
+    try:
+        Part.export([o for o in objs if o is not None], export_path)
+        App.Console.PrintMessage("STEP exportado a: %s\n" % export_path)
+    except Exception as e:
+        App.Console.PrintError("No se pudo exportar STEP: %s\n" % e)
+    return doc
+
+# Ejecutar
+main()

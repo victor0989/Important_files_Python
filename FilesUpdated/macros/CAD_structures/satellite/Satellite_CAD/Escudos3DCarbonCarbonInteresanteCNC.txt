@@ -1,0 +1,322 @@
+# ...existing code...
+# Satélite con racks, blindajes estilo Parker y refrigeración funcional.
+# Versión: multicapa ablativa + carbon-carbon (C/C) para misión espacial (densidades reducidas/optimizadas).
+import FreeCAD as App, FreeCADGui as Gui, Part, math, sys
+doc = App.newDocument("Satellite_Parker_Racks_Cooling")
+
+# -------------------------
+# Configuración paramétrica (compacta)
+# -------------------------
+cfg = {
+    "bus": {"L": 2.6, "W": 1.6, "H": 1.6, "wall": 0.01, "frame_bar": 0.04, "deck_thk": 0.008, "deck_count": 6,
+            "panel_cutouts": True, "cut_w": 0.45, "cut_h": 0.25, "cut_gap": 0.08},
+    "racks": {"gap": 0.02, "guide_w": 0.012, "guide_t": 0.01, "rows": 2, "slots": 8, "slot_gap": 0.006,
+              "backplane_t": 0.012, "conn_r": 0.01, "dowel_r": 0.006},
+    "slots_layout": [
+        ["PROP","PROP","EPS","OBC","ADCS","RF","PAYLOAD","PAYLOAD"],
+        ["PROP","PROP","EPS","OBC","ADCS","RF","PAYLOAD","PAYLOAD"]
+    ],
+    "thermal": {"radiators":[{"w":0.9,"h":1.2,"t":0.01,"face":"Y+"},{"w":0.9,"h":1.2,"t":0.01,"face":"Y-"}],
+                "heatpipes":{"r":0.008,"runs":6},"coldplates":[],"straps":{"w":0.02,"t":0.004,"runs":4},"show_MLI":True},
+    "parker_shield": {"outer_r":0.9,"inner_r":0.25,"thk":0.05,"cone_h":0.25,"offset":0.6,"standoffs":8,"standoff_r":0.02,"layers":3,"layer_gap":0.012},
+    "solar": {"wings":4,"panel_thk":0.006,"segment_L":[1.2,1.0,0.8],"segment_W":0.9,"hinge_r":0.03,"sada_r":0.1,"sada_h":0.18},
+    "harness": {"trays":3,"tray_w":0.05,"tray_h":0.03,"bundle_r":0.015}
+}
+
+# -------------------------
+# Material helper (propiedades simples, convertidas a kg/m3)
+# -------------------------
+def tag_material_props(obj, name, density=None, emissivity=None, k=None):
+    try:
+        if not hasattr(obj, "Material"):
+            obj.addProperty("App::PropertyString","Material","Meta","Material")
+        obj.Material = str(name)
+        if density is not None and not hasattr(obj, "Density"):
+            obj.addProperty("App::PropertyFloat","Density","Meta","Density")
+            obj.Density = float(density)
+        if emissivity is not None and not hasattr(obj, "Emissivity"):
+            obj.addProperty("App::PropertyFloat","Emissivity","Meta","Emissivity")
+            obj.Emissivity = float(emissivity)
+        if k is not None and not hasattr(obj, "ThermalConductivity"):
+            obj.addProperty("App::PropertyFloat","ThermalConductivity","Meta","ThermalConductivity")
+            obj.ThermalConductivity = float(k)
+    except Exception:
+        pass
+
+# -------------------------
+# Material definitions (user-provided C/C specs)
+# Densities converted to kg/m3: 1.87 g/cm3 => 1870 kg/m3
+# Ablative (PICA-like) low density ~320 kg/m3 (informative)
+# -------------------------
+MATS = {
+    "C_C_3D_CVI": {"name":"C/C_3D_CVI", "density":1870.0, "emissivity":0.65, "k":40.0},    # high density carbon-carbon (900°C conduction)
+    "C_C_Pitch": {"name":"C/C_Pitch", "density":1900.0, "emissivity":0.7, "k":45.0},
+    "Ablator_PICA": {"name":"PICA_like", "density":320.0, "emissivity":0.88, "k":0.12},
+    "MLI": {"name":"MLI_Multi", "density":1420.0, "emissivity":0.02, "k":0.02},
+    "Al_Alloy": {"name":"Aluminum_7075", "density":2700.0, "emissivity":0.09, "k":130.0}
+}
+
+# -------------------------
+# Utilidades geométricas (robustas)
+# -------------------------
+def add(shape, name, color=(0.8,0.8,0.8), alpha=0.0, parent=None):
+    o = doc.addObject("Part::Feature", name)
+    o.Shape = shape
+    try:
+        o.ViewObject.ShapeColor = color
+        o.ViewObject.Transparency = int(alpha*100)
+    except Exception:
+        pass
+    if parent:
+        try: parent.addObject(o)
+        except Exception: pass
+    return o
+
+def grp(name): return doc.addObject("App::Part", name)
+def box(w,d,h, p=(0,0,0)): return Part.makeBox(w,d,h, App.Vector(*p))
+def cyl(r,h, p=(0,0,0), d=(0,0,1)): return Part.makeCylinder(r,h, App.Vector(*p), App.Vector(*d))
+def cone(r1,r2,h, p=(0,0,0), d=(0,0,1)): return Part.makeCone(r1,r2,h, App.Vector(*p), App.Vector(*d))
+def tube_between(p1, p2, r):
+    v = App.Vector(*p2) - App.Vector(*p1)
+    h = v.Length
+    if h < 1e-6: return None
+    return cyl(r, h, p1, (v.x, v.y, v.z))
+
+# -------------------------
+# Grupos
+# -------------------------
+g_bus = grp("Bus"); g_racks = grp("Racks"); g_therm = grp("Termico"); g_shield = grp("ParkerShield")
+g_solar = grp("Solares"); g_harn = grp("Arnes"); g_shld = grp("Blindaje")
+
+# -------------------------
+# Bus estructural (igual base)
+# -------------------------
+B = cfg["bus"]; L,W,H,t = B["L"], B["W"], B["H"], B["wall"]
+outer = box(L, W, H, (0,0,0))
+inner = box(L-2*t, W-2*t, H-2*t, (t,t,t))
+shell = outer.cut(inner)
+if B["panel_cutouts"]:
+    cw,ch,cg = B["cut_w"], B["cut_h"], B["cut_gap"]
+    for side in (0,1):
+        y0 = -0.0002 if side==0 else W - t + 0.0002
+        for k in range(3):
+            z0 = t + cg + k*(ch+cg)
+            shell = shell.cut(box(cw, t+0.0004, ch, (L/2 - cw/2, y0, z0)))
+car = add(shell, "Carcasa", (0.75,0.75,0.78), 0.0, g_bus)
+tag_material_props(car, MATS["Al_Alloy"]["name"], density=MATS["Al_Alloy"]["density"], emissivity=MATS["Al_Alloy"]["emissivity"], k=MATS["Al_Alloy"]["k"])
+
+# decks / frames
+fb = B["frame_bar"]
+for (x,y) in [(t,t),(L-t-fb,t),(t,W-t-fb),(L-t-fb,W-t-fb),(L/2-fb/2,t),(L/2-fb/2,W-t-fb)]:
+    f = box(fb, fb, H-2*t, (x,y,t)); add(f, f"Frame_{x:.2f}_{y:.2f}", (0.5,0.5,0.55), 0.0, g_bus)
+
+for k in range(B["deck_count"]):
+    z = t + (H-2*t - B["deck_thk"]) * (k+1)/(B["deck_count"]+1)
+    d = box(L-2*t, W-2*t, B["deck_thk"], (t,t,z)); add(d, f"Deck_{k+1}", (0.70,0.70,0.75), 0.0, g_bus)
+
+# -------------------------
+# Racks (simplificado)
+# -------------------------
+R = cfg["racks"]
+rack_w = L - 2*t
+total_gap = (R["rows"] + 1) * R["gap"]
+rack_d = (W - 2*t - total_gap) / R["rows"]
+rack_h = H - 2*t
+def rack_bbox(r_index):
+    y0 = t + R["gap"] + r_index*(rack_d + R["gap"])
+    return (t, y0, t), (rack_w, rack_d, rack_h)
+for r_i in range(R["rows"]):
+    (rx,ry,rz),(rw,rd,rh) = rack_bbox(r_i)
+    add(box(rw, rd, rh, (rx, ry, rz)), f"Rack_{r_i+1}", (0.60,0.60,0.65), 0.0, g_racks)
+    back = box(rw, R["backplane_t"], rh, (rx, ry + rd - R["backplane_t"], rz)); add(back, f"Backplane_R{r_i+1}", (0.45,0.5,0.55), 0.0, g_racks)
+    slot_h = (rh - (R["slots"]+1)*R["slot_gap"]) / R["slots"]
+    for s in range(R["slots"]):
+        zc = rz + R["slot_gap"]*(s+1) + slot_h*s
+        add(box(rw, rd, 0.006, (rx, ry, zc)), f"SlotTray_R{r_i+1}_S{s+1}", (0.62,0.62,0.65), 0.0, g_racks)
+
+# -------------------------
+# Radiadores / heatpipes (igual)
+# -------------------------
+TH = cfg["thermal"]
+for rad in TH["radiators"]:
+    wRad, hRad, tRad, face = rad["w"], rad["h"], rad["t"], rad["face"]
+    y = W - tRad if face == "Y+" else -tRad
+    rad_box = box(wRad, tRad, hRad, (L/2.0 - wRad/2.0, y, H/2.0 - hRad/2.0))
+    robj = add(rad_box, f"Radiator_{face}", (0.85,0.85,0.9), 0.0, g_therm)
+    tag_material_props(robj, "Radiator_Alloy", density=2700.0, emissivity=0.85, k=205.0)
+
+# -------------------------
+# Parker shield (base)
+# -------------------------
+PS = cfg["parker_shield"]
+face_x = L
+for k in range(PS["layers"]):
+    r_out = PS["outer_r"] - k*PS["layer_gap"]
+    r_in = max(PS["inner_r"] - k*PS["layer_gap"]*0.5, 0.06)
+    fr = cone(r_out, r_in, PS["cone_h"], (face_x + PS["offset"], W/2.0, H/2.0), (1,0,0))
+    o = add(fr, f"TPS_Layer_{k+1}", (0.90,0.90,0.95) if k==0 else (0.85,0.85,0.9), 0.0, g_shield)
+    # assign carbon-carbon to innermost high-temp facing layer
+    if k == 0:
+        tag_material_props(o, MATS["C_C_3D_CVI"]["name"], density=MATS["C_C_3D_CVI"]["density"], emissivity=MATS["C_C_3D_CVI"]["emissivity"], k=MATS["C_C_3D_CVI"]["k"])
+    else:
+        tag_material_props(o, "Thermal_Shell", density=2500.0, emissivity=0.2, k=50.0)
+
+# standoffs
+for i in range(PS["standoffs"]):
+    ang = 2.0 * math.pi * i / PS["standoffs"]
+    yb = W/2.0 + (PS["inner_r"] - 0.05) * math.cos(ang)
+    zb = H/2.0 + (PS["inner_r"] - 0.05) * math.sin(ang)
+    base_pt = (face_x, yb, zb)
+    tip_pt = (face_x + PS["offset"], W/2.0 + PS["outer_r"] * math.cos(ang), H/2.0 + PS["outer_r"] * math.sin(ang))
+    st = tube_between(base_pt, tip_pt, PS["standoff_r"])
+    if st: add(st, f"TPS_Standoff_{i+1}", (0.6,0.6,0.65), 0.0, g_shield)
+
+# MLI rear
+if TH["show_MLI"]:
+    mli = box(0.012, 1.02*W, 1.02*H, (face_x + PS["offset"] - 0.012, -0.01, -0.01))
+    mli_o = add(mli, "TPS_MLI_Back", (1.0,1.0,0.6), 0.85, g_shield)
+    tag_material_props(mli_o, MATS["MLI"]["name"], density=MATS["MLI"]["density"], emissivity=MATS["MLI"]["emissivity"], k=MATS["MLI"]["k"])
+
+# -------------------------
+# Ablative nosecap + C/C tiles: funciones específicas
+# -------------------------
+def create_ablative_nosecap(face_x, centre_yz, radius, n_sectors=12, parent=None):
+    """
+    Crea sectores ablativos (PICA-like) cerrando frontal +X.
+    """
+    cy, cz = centre_yz
+    ang_step = 2.0 * math.pi / n_sectors
+    for i in range(n_sectors):
+        a0 = i * ang_step; a1 = a0 + ang_step
+        # approximate sector by thin wedge: use cone truncated slice approximation by box rotated would be complex;
+        # use small conical frusta arranged on ring to simulate layered tiles.
+        r_out = radius * 0.98; r_in = radius * 0.60
+        th = 0.012  # thickness of ablative tile
+        # compute sector center position on +X face
+        y = cy + (r_in + r_out)/2.0 * math.cos(a0 + ang_step/2.0)
+        z = cz + (r_in + r_out)/2.0 * math.sin(a0 + ang_step/2.0)
+        pos = (face_x + th/2.0 + 0.006, y, z)
+        tile = box(th, (r_out - r_in)*0.95, (r_out - r_in)*0.95, (pos[0], pos[1] - (r_out - r_in)*0.95/2.0, pos[2] - (r_out - r_in)*0.95/2.0))
+        o = add(tile, f"Ablator_Tile_{i+1}", (0.9,0.6,0.45), 0.0, parent if parent else g_shld)
+        tag_material_props(o, MATS["Ablator_PICA"]["name"], density=MATS["Ablator_PICA"]["density"], emissivity=MATS["Ablator_PICA"]["emissivity"], k=MATS["Ablator_PICA"]["k"])
+    return True
+
+def create_cc_tiles_ring(face_x, centre_yz, radius, rows=2, parent=None):
+    """
+    Crea anillos de tiles de Carbon-Carbon alrededor de la abertura frontal.
+    """
+    cy, cz = centre_yz
+    for row in range(rows):
+        r = radius - row*0.06
+        n = max(8, int(2*math.pi*r / 0.08))
+        for i in range(n):
+            ang = 2.0 * math.pi * i / n
+            y = cy + r * math.cos(ang)
+            z = cz + r * math.sin(ang)
+            tile = box(0.008, 0.06, 0.06, (face_x + 0.006 + row*0.009, y - 0.03, z - 0.03))
+            o = add(tile, f"CC_Tile_R{row+1}_{i+1}", (0.12,0.12,0.12), 0.0, parent if parent else g_shield)
+            tag_material_props(o, MATS["C_C_3D_CVI"]["name"], density=MATS["C_C_3D_CVI"]["density"], emissivity=MATS["C_C_3D_CVI"]["emissivity"], k=MATS["C_C_3D_CVI"]["k"])
+    return True
+
+# place ablative nosecap and CC tile rings at +X face centreline
+_front_center_yz = (W/2.0, H/2.0)
+_front_radius = min(PS["inner_r"], 0.35)
+create_ablative_nosecap(L, _front_center_yz, _front_radius, n_sectors=16, parent=g_shld)
+create_cc_tiles_ring(L, _front_center_yz, _front_radius + 0.06, rows=3, parent=g_shld)
+
+# -------------------------
+# Sun-shield stack (reflector + ceramic + spreader + MLI) attached to front (+X)
+# -------------------------
+def create_sun_shield_stack(origin, radius, stack_defs, gap=0.001, parent=None):
+    ox, oy, oz = origin
+    offset = 0.0
+    for idx, layer in enumerate(stack_defs):
+        th = float(layer.get("th", 0.002))
+        r_out = radius - layer.get("r_shrink", idx*0.01)
+        r_in = max(0.01, r_out - layer.get("annulus", 0.02))
+        pos = (ox + offset + th/2.0, oy, oz)
+        fr = cone(r_out, r_in, th, pos, (1,0,0))
+        o = add(fr, layer.get("name", f"SunLayer_{idx+1}"), layer.get("color",(0.95,0.95,0.9)), 0.0, parent if parent else g_shield)
+        tag_material_props(o, layer.get("material","Unknown"), density=layer.get("density"), emissivity=layer.get("emissivity"), k=layer.get("k"))
+        offset += th + gap
+    return True
+
+_sun_stack_defs = [
+    {"name":"Sun_Reflector_Al","th":0.001,"annulus":0.02,"material":MATS["Al_Alloy"]["name"], "density":MATS["Al_Alloy"]["density"], "emissivity":0.05, "k":MATS["Al_Alloy"]["k"], "color":(0.98,0.97,0.88)},
+    {"name":"Sun_Ceramic","th":0.008,"annulus":0.018,"material":"Refractory_Ceramic","density":3600.0,"emissivity":0.6,"k":12.0,"color":(0.8,0.7,0.6)},
+    {"name":"Sun_Spreader_Cu","th":0.004,"annulus":0.015,"material":"Copper_Spreader","density":8960.0,"emissivity":0.25,"k":380.0,"color":(0.85,0.6,0.45)},
+    {"name":"Sun_MLI","th":0.002,"annulus":0.012,"material":MATS["MLI"]["name"], "density":MATS["MLI"]["density"], "emissivity":MATS["MLI"]["emissivity"], "k":MATS["MLI"]["k"], "color":(1.0,1.0,0.92)}
+]
+
+create_sun_shield_stack((L + 0.02, W/2.0, H/2.0), _front_radius + 0.05, _sun_stack_defs, gap=0.001, parent=g_shield)
+
+# small standoffs attaching sun-stack to bus
+def create_sun_standoffs(face_x, ring_r, n=8, parent=None):
+    for i in range(n):
+        ang = 2.0 * math.pi * i / n
+        y = W/2.0 + ring_r * math.cos(ang)
+        z = H/2.0 + ring_r * math.sin(ang)
+        base = (face_x, y, z); tip = (face_x + 0.02, W/2.0 + (ring_r + 0.02) * math.cos(ang), H/2.0 + (ring_r + 0.02) * math.sin(ang))
+        st = tube_between(base, tip, 0.012)
+        if st: add(st, f"Sun_Standoff_{i+1}", (0.6,0.6,0.65), 0.0, parent if parent else g_shield)
+create_sun_standoffs(L, _front_radius + 0.02, n=8, parent=g_shield)
+
+# -------------------------
+# Whipple patches + extra carbon patches near service panel
+# -------------------------
+add(box(0.4, 0.55, 0.008, (L/2.0 - 0.4/2.0, W/2.0 - 0.55/2.0, -0.008)), "Whipple_Bottom", (0.8,0.8,0.85), 0.0, g_shld)
+wp = doc.getObject("Whipple_Bottom"); tag_material_props(wp, "Whipple_Stack", density=2700.0, emissivity=0.6, k=50.0)
+# small CC patch near service panel (front-right)
+cc_patch = box(0.20, 0.08, 0.006, (L - 0.40, W - 0.02, H/2.0 - 0.04))
+cc_o = add(cc_patch, "CC_ServicePatch", (0.12,0.12,0.12), 0.0, g_shld)
+tag_material_props(cc_o, MATS["C_C_Pitch"]["name"], density=MATS["C_C_Pitch"]["density"], emissivity=MATS["C_C_Pitch"]["emissivity"], k=MATS["C_C_Pitch"]["k"])
+
+# -------------------------
+# Harness trays (positioned inside bus bounds to avoid assembly warnings)
+# -------------------------
+HA = cfg["harness"]
+for i in range(HA["trays"]):
+    z = t + (H - 2*t) * (i+1) / (HA["trays"] + 1)
+    tray = box(HA["tray_w"], HA["tray_h"], rack_w - 0.02, (t + 0.01, t + 0.01, z - (rack_w - 0.02)/2.0))
+    o = add(tray, f"HarnessTray_{i+1}", (0.6,0.55,0.45), 0.0, g_harn)
+    tag_material_props(o, "Tray_Alloy", density=2700.0, emissivity=0.12, k=130.0)
+
+# -------------------------
+# Simple assembly check (warnings filtered for intended externals)
+# -------------------------
+def check_assembly(tol=1e-3):
+    issues = []
+    outer_min = App.Vector(0.0, 0.0, 0.0); outer_max = App.Vector(L, W, H)
+    allowed_prefixes = ("Radiator","Thruster","TPS","SunLayer","Sun_","Ablator","CC_","Whipple","Sun_Standoff","CC_ServicePatch")
+    for o in doc.Objects:
+        try:
+            bb = o.Shape.BoundBox
+            minv = App.Vector(bb.XMin, bb.YMin, bb.ZMin); maxv = App.Vector(bb.XMax, bb.YMax, bb.ZMax)
+            if minv.x < outer_min.x - tol and not o.Name.startswith(allowed_prefixes): issues.append((o.Name,"XMin outside"))
+            if maxv.x > outer_max.x + tol and not o.Name.startswith(allowed_prefixes): issues.append((o.Name,"XMax outside"))
+            if minv.y < outer_min.y - tol and not o.Name.startswith(allowed_prefixes): issues.append((o.Name,"YMin outside"))
+            if maxv.y > outer_max.y + tol and not o.Name.startswith(allowed_prefixes): issues.append((o.Name,"YMax outside"))
+            if minv.z < outer_min.z - tol and not o.Name.startswith(allowed_prefixes): issues.append((o.Name,"ZMin outside"))
+            if maxv.z > outer_max.z + tol and not o.Name.startswith(allowed_prefixes): issues.append((o.Name,"ZMax outside"))
+        except Exception:
+            continue
+    if issues:
+        for it in issues[:20]:
+            print("Assembly warning:", it[0], "->", it[1])
+    else:
+        print("Assembly check: OK (tolerances).")
+check_assembly(tol=1e-3)
+
+# -------------------------
+# Final recompute and view
+# -------------------------
+doc.recompute()
+try:
+    Gui.activeView().viewAxonometric()
+    Gui.SendMsgToActiveView("ViewFit")
+except Exception:
+    pass
+
+print("Macro: satélite con capas ablativas y carbon-carbon (C/C) creado.")
+print(f"Dimensiones exteriores: {L:.2f} x {W:.2f} x {H:.2f} m")
+# ...existing code...

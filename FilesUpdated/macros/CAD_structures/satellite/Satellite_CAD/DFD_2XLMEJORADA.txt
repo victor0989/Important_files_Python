@@ -1,0 +1,460 @@
+# ...existing code...
+# -*- coding: utf-8 -*-
+# FreeCAD Macro: Nave DFD XL adaptada a perihelio extremo
+# Autor: Víctor Alonso García + Copilot
+# Descripción: Variante XL del DFD con escudos TPS multilayer, blindajes, radiadores en sombra,
+# tanques, sensores y tren, fusionada en un único sólido manifold para 3D printing.
+# Unidades: mm
+
+import FreeCAD as App, Part, math, MeshPart
+from FreeCAD import Vector
+
+doc = App.newDocument("Nave_DFD_XL_Solar")
+
+# ========================
+# Parámetros
+# ========================
+P = {
+    'scale': 2.0,  # nave más grande
+
+    # Fuselaje (igual base, estilo DFD)
+    'nose_len': 1500.0, 'nose_base_d': 1100.0,
+    'mid_len': 3000.0, 'mid_d': 1800.0,
+    'rear_len': 1500.0, 'rear_d': 2200.0,
+    'hull_t': 30.0,
+
+    # Escudo térmico frontal multilayer (TPS)
+    'shield_d': 2600.0,      # diámetro del escudo principal
+    'shield_flecha': 80.0,   # flecha/abombamiento frontal
+    't_ceramic': 4.0, 't_foam': 120.0, 't_cc': 12.0,
+    'rim_w': 60.0, 'rim_h': 80.0,
+
+    # Mangas/blindajes TPS alrededor del fuselaje y reactor
+    'hull_shield_t': 80.0, 'hull_shield_l': 2800.0,
+    'reactor_shield_t': 120.0, 'reactor_shield_l': 2200.0,
+
+    # Reactor (como base DFD)
+    'reactor_d': 1500.0, 'reactor_l': 1800.0,
+
+    # Módulo hábitat
+    'hab_d': 1400.0, 'hab_l': 2500.0,
+
+    # Cabina
+    'cockpit_d': 900.0, 'cockpit_l': 800.0, 'window_r': 150.0,
+
+    # Tanques laterales
+    'tank_r': 400.0, 'tank_l': 2000.0, 'tank_off': 1200.0,
+
+    # Tanques esféricos
+    'sphere_r': 450.0, 'sphere_off': 1600.0,
+
+    # Radiadores (reformulados a sombra trasera)
+    'wing_span': 2500.0, 'wing_th': 60.0, 'wing_l': 2200.0, 'wing_back_offset': 1200.0,
+
+    # Collar térmico y paravientos (deflectores)
+    'collar_d_delta': 300.0, 'collar_h': 120.0, 'collar_t': 40.0,
+    'def_count': 8, 'def_l': 800.0, 'def_w': 160.0, 'def_t': 30.0,
+
+    # Antenas
+    'mast_l': 1000.0, 'mast_r': 40.0, 'dish_r': 400.0,
+
+    # Tren de aterrizaje
+    'leg_r': 100.0, 'leg_l': 800.0, 'foot_r': 250.0, 'foot_t': 50.0,
+
+    # Escotillas y acoplamiento
+    'dock_r': 400.0, 'dock_l': 300.0, 'dock_off': 800.0,
+
+    # Sensores
+    'sensor_r': 50.0, 'sensor_l': 200.0,
+
+    # Refuerzos internos
+    'beam_r': 50.0, 'beam_l': 3000.0,
+
+    # Tolerancias de solape para fusión robusta
+    'overlap': 2.0
+}
+
+# ========================
+# Materiales y utilidades para impresión / radiación
+# ========================
+MATERIALS = {
+    "Al": {"rho": 2700.0},      # kg/m3 (usado para cálculo de masa)
+    "Ti": {"rho": 4430.0},
+    "CFRP": {"rho": 1600.0},
+    "TPS": {"rho": 1800.0},
+    "Bolt": {"rho": 7850.0},
+    "MLI": {"rho": 1400.0}
+}
+
+def tag_material(obj, name="Al", density=None, printable=True):
+    if not hasattr(obj, "Material"):
+        obj.addProperty("App::PropertyString", "Material", "FEM", "Material tag")
+    if not hasattr(obj, "Density"):
+        obj.addProperty("App::PropertyFloat", "Density", "FEM", "Density kg/m^3")
+    obj.Material = name
+    obj.Density = density if density is not None else MATERIALS.get(name, {}).get("rho", 2700.0)
+    if not hasattr(obj, "Printable"):
+        obj.addProperty("App::PropertyBool", "Printable", "Print", "Printable part")
+    obj.Printable = bool(printable)
+
+def set_mesh_hint(obj, h):
+    if not hasattr(obj, "MeshSizeHint"):
+        obj.addProperty("App::PropertyFloat", "MeshSizeHint", "Mesh", "Target mesh edge length")
+    obj.MeshSizeHint = float(h)
+
+def fuse_robust(target, part, max_retries=3):
+    # intenta fusionar con tolerancias y micro-solapes si hay fallo
+    try:
+        return target.fuse(part)
+    except Exception:
+        for i in range(1, max_retries+1):
+            try:
+                # micro-translate small fraction of overlap
+                part_t = part.copy()
+                part_t.translate(Vector(0, 0, i * P['overlap'] * 0.05))
+                return target.fuse(part_t)
+            except Exception:
+                pass
+        # fallback: crear compound (no ideal, pero mantiene objetos)
+        try:
+            return Part.Compound([target, part])
+        except Exception:
+            return target
+
+# ========================
+# Función auxiliar
+# ========================
+def add_obj(shape, name):
+    obj = doc.addObject("Part::Feature", name)
+    obj.Shape = shape
+    return obj
+
+# ========================
+# Fuselaje principal (base DFD)
+# ========================
+nose = Part.makeCone(0, P['nose_base_d']/2, P['nose_len'])
+mid = Part.makeCylinder(P['mid_d']/2, P['mid_len'])
+mid.translate(App.Vector(0,0,P['nose_len']))
+rear = Part.makeCone(P['rear_d']/2, P['mid_d']/2, P['rear_len'])
+rear.translate(App.Vector(0,0,P['nose_len']+P['mid_len']))
+hull = nose.fuse(mid).fuse(rear)
+
+# marcar hull imprimible si grosor suficiente
+hull_obj = add_obj(hull, "Hull_Base")
+tag_material(hull_obj, "Al", printable=True)
+set_mesh_hint(hull_obj, 0.8)
+
+# ========================
+# Escudo térmico frontal multilayer (TPS)
+# ========================
+shield_R = P['shield_d']/2.0
+cer = Part.makeCylinder(shield_R, P['t_ceramic'])
+cone = Part.makeCone(shield_R, shield_R - 40.0, P['shield_flecha'])
+cone.translate(App.Vector(0,0,-P['shield_flecha']))
+cer = cer.fuse(cone)
+foam = Part.makeCylinder(shield_R - P['overlap'], P['t_foam'])
+foam.translate(App.Vector(0,0,P['t_ceramic'] - P['overlap']))
+back = Part.makeCylinder(shield_R - 2*P['overlap'], P['t_cc'])
+back.translate(App.Vector(0,0,P['t_ceramic'] + P['t_foam'] - 2*P['overlap']))
+rimOD = shield_R; rimID = shield_R - P['rim_w']
+rim = Part.makeCylinder(rimOD, P['rim_h']).cut(Part.makeCylinder(rimID, P['rim_h']))
+rim.translate(App.Vector(0,0,P['t_ceramic'] + P['t_foam'] + P['t_cc'] - P['rim_h']))
+shield = cer.fuse(foam).fuse(back).fuse(rim)
+shield.translate(App.Vector(0,0,-(P['t_ceramic'] + P['t_foam'] + P['t_cc'])))
+shield_obj = add_obj(shield, "Shield_TPS")
+tag_material(shield_obj, "TPS", printable=False)
+set_mesh_hint(shield_obj, 0.6)
+
+# ========================
+# Blindajes TPS alrededor del fuselaje y reactor (mangas)
+# ========================
+hull_shield = Part.makeCylinder(P['mid_d']/2 + P['hull_shield_t'], P['hull_shield_l'])
+hull_shield.translate(App.Vector(0,0,P['nose_len'] + (P['mid_len'] - P['hull_shield_l'])/2.0))
+hull_shield_obj = add_obj(hull_shield, "Hull_Shield")
+tag_material(hull_shield_obj, "TPS", printable=False)
+
+reactor_shield = Part.makeCylinder(P['reactor_d']/2 + P['reactor_shield_t'], P['reactor_shield_l'])
+reactor_shield.translate(App.Vector(0,0,P['nose_len'] + P['mid_len'] - 200.0))
+reactor_shield_obj = add_obj(reactor_shield, "Reactor_Shield")
+tag_material(reactor_shield_obj, "TPS", printable=False)
+
+# ========================
+# Reactor + boquilla (base DFD)
+# ========================
+reactor = Part.makeCylinder(P['reactor_d']/2, P['reactor_l'])
+reactor.translate(App.Vector(0,0,P['nose_len']+1200))
+nozzle = Part.makeCone(P['rear_d']/2, P['rear_d'], 1000)
+nozzle.translate(App.Vector(0,0,P['nose_len']+P['mid_len']+P['rear_len']))
+reactor_full = reactor.fuse(nozzle)
+reactor_obj = add_obj(reactor_full, "Reactor")
+tag_material(reactor_obj, "Ti", printable=True)
+
+# ========================
+# Módulo hábitat
+# ========================
+hab = Part.makeCylinder(P['hab_d']/2, P['hab_l'])
+hab.translate(App.Vector(0,0,P['nose_len']+P['mid_len']+500))
+hab_obj = add_obj(hab, "Hab_Module")
+tag_material(hab_obj, "CFRP", printable=True)
+
+# ========================
+# Cabina de mando
+# ========================
+cockpit = Part.makeCylinder(P['cockpit_d']/2, P['cockpit_l'])
+cockpit.translate(App.Vector(0,0,50))
+window = Part.makeSphere(P['window_r'])
+window.translate(App.Vector(P['cockpit_d']/3,0,P['cockpit_l']/2))
+cockpit_cut = cockpit.cut(window)
+cockpit_obj = add_obj(cockpit_cut, "Cockpit")
+tag_material(cockpit_obj, "Al", printable=True)
+
+# ========================
+# Tanques laterales y esféricos
+# ========================
+tankL = Part.makeCylinder(P['tank_r'], P['tank_l'])
+tankL.translate(App.Vector(P['tank_off'],0,P['nose_len']+1000))
+tankR = Part.makeCylinder(P['tank_r'], P['tank_l'])
+tankR.translate(App.Vector(-P['tank_off'],0,P['nose_len']+1000))
+sphereL = Part.makeSphere(P['sphere_r'])
+sphereL.translate(App.Vector(P['sphere_off'],0,P['nose_len']+2500))
+sphereR = Part.makeSphere(P['sphere_r'])
+sphereR.translate(App.Vector(-P['sphere_off'],0,P['nose_len']+2500))
+tanks = tankL.fuse(tankR).fuse(sphereL).fuse(sphereR)
+tanks_obj = add_obj(tanks, "Tanks")
+tag_material(tanks_obj, "Al", printable=True)
+set_mesh_hint(tanks_obj, 0.6)
+
+# ========================
+# Radiadores en sombra (reubicados hacia atrás)
+# ========================
+wingL = Part.makeBox(P['wing_span'], P['wing_th'], P['wing_l'])
+wingL.translate(App.Vector(-P['wing_span']/2, -P['mid_d']/2-150, P['nose_len']+P['mid_len']+P['wing_back_offset']))
+wingR = Part.makeBox(P['wing_span'], P['wing_th'], P['wing_l'])
+wingR.translate(App.Vector(-P['wing_span']/2, P['mid_d']/2+150, P['nose_len']+P['mid_len']+P['wing_back_offset']))
+wings = wingL.fuse(wingR)
+wings_obj = add_obj(wings, "Radiators")
+tag_material(wings_obj, "Al", printable=True)
+set_mesh_hint(wings_obj, 1.0)
+
+# ========================
+# Collar térmico y paravientos (deflectores)
+# ========================
+collarOD = P['mid_d'] + P['collar_d_delta']
+collar = Part.makeCylinder(collarOD/2.0, P['collar_h']).cut(Part.makeCylinder((collarOD/2.0 - P['collar_t']), P['collar_h']))
+collar.translate(App.Vector(0,0,P['nose_len'] + P['mid_len']/2.0 - P['collar_h']/2.0))
+collar_obj = add_obj(collar, "Collar")
+tag_material(collar_obj, "Al", printable=False)
+
+defs = []
+for i in range(P['def_count']):
+    ang = i * (360.0 / P['def_count'])
+    d = Part.makeBox(P['def_l'], P['def_w'], P['def_t'])
+    d.translate(App.Vector(-P['def_l']/2.0, -P['def_w']/2.0, P['nose_len'] + P['mid_len']/2.0 - P['def_t']/2.0))
+    baseR = collarOD/2.0 + P['overlap']
+    d.Placement = App.Placement(App.Vector(baseR,0,0), App.Rotation(App.Vector(0,0,1), ang))
+    defs.append(d)
+deflectores = defs[0]
+for d in defs[1:]:
+    deflectores = deflectores.fuse(d)
+deflectores_obj = add_obj(deflectores, "Deflectores")
+tag_material(deflectores_obj, "Al", printable=False)
+
+# ========================
+# Escotillas y acoplamientos
+# ========================
+dockL = Part.makeCylinder(P['dock_r'], P['dock_l'])
+dockL.translate(App.Vector(P['dock_off'],0,P['nose_len']+1800))
+dockR = Part.makeCylinder(P['dock_r'], P['dock_l'])
+dockR.translate(App.Vector(-P['dock_off'],0,P['nose_len']+1800))
+docking = dockL.fuse(dockR)
+docking_obj = add_obj(docking, "Docking")
+tag_material(docking_obj, "Al", printable=True)
+
+# ========================
+# Sensores y cámaras externas
+# ========================
+sensor1 = Part.makeSphere(P['sensor_r'])
+sensor1.translate(App.Vector(P['mid_d']/2+100,0,P['nose_len']+2000))
+sensor2 = Part.makeSphere(P['sensor_r'])
+sensor2.translate(App.Vector(-P['mid_d']/2-100,0,P['nose_len']+2000))
+sensors = sensor1.fuse(sensor2)
+sensors_obj = add_obj(sensors, "Sensors")
+tag_material(sensors_obj, "Al", printable=True)
+
+# ========================
+# Refuerzos internos
+# ========================
+beam1 = Part.makeCylinder(P['beam_r'], P['beam_l'])
+beam1.translate(App.Vector(0,0,P['nose_len']))
+beam2 = Part.makeCylinder(P['beam_r'], P['beam_l'])
+beam2.translate(App.Vector(0,0,P['nose_len']+P['mid_len']))
+beams = beam1.fuse(beam2)
+beams_obj = add_obj(beams, "Beams")
+tag_material(beams_obj, "Al", printable=False)
+
+# ========================
+# Antena + parabólica
+# ========================
+mast = Part.makeCylinder(P['mast_r'], P['mast_l'])
+mast.translate(App.Vector(P['mid_d']/2+100,0,P['nose_len']+P['mid_len']))
+dish_flat = Part.makeCone(P['dish_r'], P['dish_r']-200.0, 180.0)
+dish_flat.translate(App.Vector(P['mid_d']/2+100,0,P['nose_len']+P['mid_len']+P['mast_l']))
+antenna = mast.fuse(dish_flat)
+antenna_obj = add_obj(antenna, "Antenna")
+tag_material(antenna_obj, "Al", printable=True)
+
+# ========================
+# Tren de aterrizaje 4 patas
+# ========================
+legs = []
+for angle in [0,90,180,270]:
+    leg = Part.makeCylinder(P['leg_r'], P['leg_l'])
+    leg.translate(App.Vector((P['mid_d']/2)*math.cos(math.radians(angle)),
+                             (P['mid_d']/2)*math.sin(math.radians(angle)),0))
+    foot = Part.makeCylinder(P['foot_r'], P['foot_t'])
+    foot.translate(App.Vector((P['mid_d']/2)*math.cos(math.radians(angle)),
+                              (P['mid_d']/2)*math.sin(math.radians(angle)),-P['foot_t']))
+    legs.append(leg.fuse(foot))
+landing_full = legs[0].fuse(legs[1]).fuse(legs[2]).fuse(legs[3])
+landing_obj = add_obj(landing_full, "Landing")
+tag_material(landing_obj, "Al", printable=True)
+
+# ========================
+# Ensamblaje final con fusión robusta y cierre de huecos
+# ========================
+parts = [
+    hull_obj.Shape, shield_obj.Shape, hull_shield_obj.Shape, reactor_shield_obj.Shape,
+    cockpit_obj.Shape, reactor_obj.Shape, hab_obj.Shape, tanks_obj.Shape,
+    wings_obj.Shape, collar_obj.Shape, deflectores_obj.Shape, docking_obj.Shape,
+    sensors_obj.Shape, beams_obj.Shape, antenna_obj.Shape, landing_obj.Shape
+]
+
+# crear "joiners" entre estructuras donde suelen quedar huecos (uniones coaxiales y tanques)
+joiners = []
+# ejemplo: unir tanques a hull con cilindros de solape
+for pos in [(P['tank_off'], 0, P['nose_len']+1000), (-P['tank_off'], 0, P['nose_len']+1000)]:
+    j = Part.makeCylinder( P['tank_r']*0.6, P['overlap']*6 )
+    j.translate(App.Vector(pos[0], pos[1], pos[2] - P['overlap']*3))
+    joiners.append(j)
+
+# join between shield and hull front
+j2 = Part.makeCylinder(shield_R*0.9, P['overlap']*6)
+j2.translate(App.Vector(0,0,-P['overlap']*3))
+joiners.append(j2)
+
+# fuse joiners into parts list
+for j in joiners:
+    parts.append(j)
+
+# robust union incremental (evita fallos por geometrías coplanares)
+nave = parts[0]
+for p in parts[1:]:
+    try:
+        nave = nave.fuse(p)
+    except Exception:
+        # intentar con micro-traslaciones / overlap
+        nave = fuse_robust(nave, p)
+
+# intentar convertir a sólido si es shell/compound
+try:
+    nave_solid = Part.makeSolid(Part.Shell(nave.Faces)) if hasattr(nave, "Faces") else nave
+except Exception:
+    # fallback: usar el compound como objeto final
+    nave_solid = nave
+
+nave_obj = add_obj(nave_solid, "Nave_DFD_XL_Solar_Manifold")
+# asignar material y printable si grosor suficiente
+tag_material(nave_obj, "Al", printable=True)
+set_mesh_hint(nave_obj, 0.9)
+
+# ========================
+# Añadir MLI exterior ligero y Whipple frontal para radiación y micrometeoroides
+# ========================
+# MLI: varias capas cilíndricas alrededor del tramo medio (no imprimible)
+mli_layers = []
+mli_base_r = P['mid_d']/2 + 40.0
+for i in range(3):
+    t = 3.0
+    r_out = mli_base_r + i*(t + 2.0)
+    cyl_o = Part.makeCylinder(r_out + t, P['mid_len'] + 200.0)
+    cyl_i = Part.makeCylinder(r_out, P['mid_len'] + 200.0)
+    layer = cyl_o.cut(cyl_i)
+    layer.translate(App.Vector(0,0,P['nose_len'] - 100))
+    mli_layers.append(layer)
+mli_union = mli_layers[0] if mli_layers else None
+for l in mli_layers[1:]:
+    mli_union = mli_union.fuse(l)
+if mli_union:
+    mli_obj = add_obj(mli_union, "MLI_Layers")
+    tag_material(mli_obj, "MLI", printable=False)
+    set_mesh_hint(mli_obj, 1.2)
+
+# Whipple disks in front (protect Gores)
+whip_disks = []
+for i in range(4):
+    dr = shield_R + 100 + i*30
+    disk = Part.makeCylinder(dr, 10.0)
+    disk.translate(App.Vector(0,0,-300 - i*40))
+    dobj = add_obj(disk, f"Whipple_{i+1}")
+    tag_material(dobj, "Al", printable=False)
+    whip_disks.append(dobj)
+
+# ========================
+# Informe rápido (volumen y masa aproximada). Atención: vol en mm^3 -> convertir a m^3
+# ========================
+def obj_mass(obj):
+    try:
+        vol_mm3 = obj.Shape.Volume
+        vol_m3 = vol_mm3 * 1e-9
+        rho = getattr(obj, "Density", 2700.0)
+        mass = vol_m3 * rho
+        return vol_m3, mass
+    except Exception:
+        return 0.0, 0.0
+
+total_vol = 0.0; total_mass = 0.0
+for o in doc.Objects:
+    if hasattr(o, "Shape") and not o.isDerivedFrom("App::DocumentObjectGroup"):
+        v,m = obj_mass(o)
+        total_vol += v; total_mass += m
+
+print("=== Informe rápido DFD XL ===")
+print(f"Volumen total (m^3): {total_vol:0.3f}")
+print(f"Masa estimada (kg):    {total_mass:0.1f}")
+
+# ========================
+# Export STEP y STLs de objetos imprimibles
+# ========================
+try:
+    import ImportGui as IG
+except Exception:
+    IG = None
+
+App.ActiveDocument.recompute()
+
+objs_to_export = [o for o in doc.Objects if hasattr(o, "Shape") and not o.isDerivedFrom("App::DocumentObjectGroup")]
+out_dir = App.getUserAppDataDir()
+step_path = out_dir + "Nave_DFD_XL_Solar.step"
+if IG:
+    try:
+        IG.export(objs_to_export, step_path)
+        print("STEP exportado:", step_path)
+    except Exception:
+        print("Fallo export STEP; prueba export desde GUI")
+else:
+    print("ImportGui no disponible, exporta STEP desde la GUI si es necesario.")
+
+# Exportar STL para cada objeto marcado Printable
+for o in doc.Objects:
+    if hasattr(o, "Printable") and getattr(o, "Printable"):
+        try:
+            fname = f"{out_dir}{o.Name}.stl"
+            mesh = MeshPart.meshFromShape(Shape=o.Shape, LinearDeflection=1.0, AngularDeflection=0.524)
+            if mesh:
+                mesh.write(fname)
+                print("STL exportado:", fname)
+        except Exception:
+            pass
+
+doc.recompute()
+# ...existing code...

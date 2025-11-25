@@ -1,0 +1,64 @@
+# TPS blindaje
+# Rim anular
+rim_R = (P["nose_base_d"]/2.0) + P["shield_offset"]
+rim = mk_torus_x(rim_R, P["shield_rim_th"]/2.0, cx=P["nose_len"]*0.05)
+rim_box = mk_box(P["shield_rim_w"], P["shield_rim_w"], P["shield_rim_th"],
+                 cx=P["nose_len"]*0.05, cy=0.0, cz=0.0)
+
+rim_sh = safe_fuse([rim, rim_box])
+rim_sh = chamfer_all(rim_sh, CHAMFERR)
+add_obj(rim_sh, "Shield_Rim")
+parts.append(rim_sh)
+
+# Cono de escudo base (soporte)
+shield_base = mk_cone_x(P["nose_base_d"] + 2.0*P["shield_offset"],
+                        P["mid_d"] + 2.0*P["shield_offset"],
+                        P["nose_len"]*0.9,
+                        cx=P["nose_len"]*0.45)
+# Segmentación en pétalos con holguras
+shield_petals = []
+segN = max(3, int(P["shield_seg_n"]))
+for i in range(segN):
+    ang0 = (360.0/segN) * i + EPS*2.0
+    ang1 = ang0 + (360.0/segN) - EPS*4.0
+    # corte sectorial
+    sector = Part.makeCylinder(2000.0 * SCALE, 2000.0 * SCALE)
+sector.Placement = App.Placement(App.Vector(P["nose_len"]*0.45, 0, 0), rot_to_x())
+    # usa wedge polar aproximado: rotación para sector angular
+    # simplificación: caja rotada para cortar el segmento
+    cut_box = mk_box(2200.0 * SCALE, 2200.0 * SCALE, 2200.0 * SCALE,
+                     cx=P["nose_len"]*0.45, cy=0.0, cz=0.0)
+    cut_box.Placement.Rotation = App.Rotation(Z_AXIS, ang0)
+    petal = shield_base.cut(cut_box)
+    petal = fillet_all(petal, FILLETR)
+    shield_petals.append(petal)
+
+shield_sh = safe_fuse(shield_petals)
+add_obj(shield_sh, "Shield_Segmented")
+parts.append(shield_sh)
+
+# Capas TPS sobre el escudo y el fuselaje frontal
+tps_total = P["tps_cc_t"] + P["tps_ceramic_t"] + P["tps_foam_t"] + P["tps_gap_t"]
+
+# Shell CC
+shield_cc = make_shell_from_offset(shield_sh, -P["tps_cc_t"])
+add_obj(shield_cc, "TPS_CC")
+# Shell Cerámica
+shield_cer = make_shell_from_offset(shield_cc, -P["tps_ceramic_t"])
+add_obj(shield_cer, "TPS_Ceramic")
+# Foam (expansión, se retrasa para crear gap)
+shield_gap = make_shell_from_offset(shield_cer, -P["tps_gap_t"])
+add_obj(shield_gap, "TPS_Gap")
+shield_foam = make_shell_from_offset(shield_gap, -P["tps_foam_t"])
+add_obj(shield_foam, "TPS_Foam")
+
+# TPS frontal sobre fuselaje (nariz y mid anterior)
+front_zone = mk_cone_x(P["nose_base_d"], P["mid_d"], P["nose_len"]*0.6, cx=P["nose_len"]*0.3)
+front_cc = make_shell_from_offset(front_zone, -P["tps_cc_t"])
+front_cer = make_shell_from_offset(front_cc, -P["tps_ceramic_t"])
+front_gap = make_shell_from_offset(front_cer, -P["tps_gap_t"])
+front_foam = make_shell_from_offset(front_gap, -P["tps_foam_t"])
+add_obj(safe_fuse([front_cc, front_cer, front_gap, front_foam]), "TPS_Front_Stack")
+
+
+

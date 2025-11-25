@@ -1,0 +1,105 @@
+#Blindaje cubesat
+#--- funciones añadidas: capas de blindaje solar/alta temperatura (geométricas y físicas)
+def create_sun_shield_layers(origin, radius, stack, gap=0.001, normal=(1,0,0), parent=None):
+
+"""
+    Crea una pila de capas protectoras orientadas según `normal`.
+    origin: (x,y,z) punto de montaje (cara del bus hacia el sol).
+    radius: radio exterior aproximado de las capas.
+    stack: lista de dicts con keys: name, th (m), annulus (m, reducción per capa opcional),
+           material (string), emissivity (float opc), density (opc), k (opc), color (tuple opc).
+    gap: separación entre capas.
+    parent: grupo FreeCAD opcional donde añadir objetos.
+    """
+    ox,oy,oz = origin
+    # desplazamiento local a lo largo de normal (simplemente x en nuestro layout)
+    offset = 0.0
+    for idx, layer in enumerate(stack):
+        th = float(layer.get("th", 0.002))
+        ann = float(layer.get("annulus", radius*0.05))
+        r_out = float(layer.get("r_out", radius - idx * (ann*0.2)))
+r_in = max(0.01, r_out - ann)
+        # usar frusta cónica para buen encuadre mecánico; posicionar el cono con su base centrada en origin + offset
+        pos = (ox + offset*normal[0], oy + offset*normal[1], oz + offset*normal[2])
+        try:
+            fr = cone(r_out, r_in, th, pos, normal)
+        except Exception:
+           # fallback a disco rectangular si cone falla en algún entorno FreeCAD               
+           fr = box(th if normal[0] else r_out*2, r_out*2, r_out*2, (pos[0], pos[1]-r_out, pos[2]-r_out))
+ o = add(fr, layer.get("name", f"SunLayer_{idx+1}"), layer.get("color", (0.9,0.9,0.9)), 0.0, parent if parent else g_shield)
+        # etiquetas físicas simples
+        tag_material_props(o, layer.get("material", "Unknown"), density=layer.get("density"), emissivity=layer.get("emissivity"), k=layer.get("k"))
+        offset += th + gap
+    return True
+
+def create_sun_layer_stanoffs(face_x, ring_radius, n_standoffs=8, standoff_r=0.015, standoff_len=0.04, parent=None):
+   Crea standoffs radiales que sujetan la pila de capas al borde del bus.
+    face_x: coordenada X del bus (punto de anclaje).
+    ring_radius: radio donde emergerán los standoffs (en torno al centro YZ).
+    """
+    for i in range(n_standoffs):
+        and = 2.0 * math.pi * i / n_standoffs
+        y = W/2.0 + ring_radius * math.cos(ang)
+        z = H/2.0 + ring_radius * 
+math.sin(ang)
+        base = (face_x, y, z)
+tip = (face_x + 0.02, W/2.0 + (ring_radius + 0.02) * math.cos(ang), H/2.0 + (ring_radius + 0.02) * math.sin(ang))
+        st = tube_between(base, tip, standoff_r)
+        if st:
+            add(st, f"SunStandoff_{i+1}", (0.6,0.6,0.65), 0.0, parent if parent else g_shield)
+
+def apply_solar_coating_to_radiators(coating_reflectivity=0.92, coating_emissivity=0.05):
+    """
+    Marca radiadores con propiedades de recubrimiento solar (para uso informativo).
+    """
+    for o in doc.Objects:
+        if o.Name.startswith("Radiator_"):
+            try:
+                tag_material_props(o, "Radiator_Alloy", emissivity=coating_emissivity, density=2700.0, k=205.0)
+                if not hasattr(o, "Coating_Reflectivity"):
+                    o.addProperty("App::PropertyFloat","Coating_Reflectivity","Thermal","Coating")
+                o.Coating_Reflectivity = float(coating_reflectivity)
+            except Exception:
+                pass
+
+# --- ejemplo de uso (insertar en el flujo justo después de crear la cara frontal +X del bus / Parker shield)
+# origin frontal (un poco desplazado desde la cara X del bus)
+_sun_origin = (L + 0.02, W/2.0, H/2.0)
+_sun_radius = min(PS["outer_r"], 0.95) if "PS" in globals() else 0.9
+
+_sun_stack = [
+    {"name":"Sun_Outer_Reflector","th":0.001,"annulus":0.020,"material":"Aluminum_Reflect","emissivity":0.05,"density":2700.0,"k":205.0,"color":(0.98,0.95,0.80)},
+    {"name":"Sun_Refractory_Ceramic","th":0.008,"annulus":0.018,"material":"RefractoryC","emissivity":0.6,"density":7800.0,"k":20.0,"color":(0.82,0.72,0.62)},
+    {"name":"Sun_Spreader_Cu","th":0.004,"annulus":0.015,"material":"Copper","emissivity":0.2,"density":8960.0,"k":380.0,"color":(0.85,0.65,0.45)},
+    {"name":"Sun_MLI_Layers","th":0.002,"annulus":0.012,"material":"MLI_Composite","emissivity":0.02,"density":1420.0,"k":0.02,"color":(1.0,1.0,0.92)}
+]
+
+# crear pila y standoffs (funciones idempotentes simples)
+create_sun_shield_layers(_sun_origin, _sun_radius, _sun_stack, gap=0.001, parent=g_shield)
+crete_sun_layer_standoffs(L, _sun_radius*0.9, n_standoffs=8, standoff_r=0.012, standoff_len=0.04, parent=g_shield)
+apply_solar_coating_to_radiators(coating_reflectivity=0.92, coating_emissivity=0.05)
+# ...existing code…
+
+
+# ...existing code...
+def tag_material_props(obj, name, density=None, emissivity=None, k=None):
+    """
+    Añade propiedades informativas de material a un objeto FreeCAD de forma segura.
+    """
+    try:
+        if not hasattr(obj, "Material"):
+            obj.addProperty("App::PropertyString", "Material", "Meta", "Material")
+        obj.Material = str(name)
+        if density is not None and not hasattr(obj, "Density"):
+            obj.addProperty("App::PropertyFloat", "Density", "Meta", "Density")
+            obj.Density = float(density)
+        if emissivity is not None and not hasattr(obj, "Emissivity"):
+            obj.addProperty("App::PropertyFloat", "Emissivity", "Meta", "Emissivity")
+            obj.Emissivity = float(emissivity)
+        if k is not None and not hasattr(obj, "ThermalConductivity"):
+            obj.addProperty("App::PropertyFloat", "ThermalConductivity", "Meta", "ThermalConductivity")
+            obj.ThermalConductivity = float(k)
+    except Exception:
+        pass
+# ...existing code...
+
