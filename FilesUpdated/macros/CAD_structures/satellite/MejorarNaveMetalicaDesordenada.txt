@@ -1,0 +1,372 @@
+# -*- coding: utf-8 -*-
+# Macro: StarSat (Satélite + Nave estilo Star Wars) — versión modular mejorada
+# Autor: Copilot para Víctor (Madrid)
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part, math, random
+
+# Documento
+doc = App.newDocument("StarSat")
+
+# ---------------------------
+# PARÁMETROS
+# ---------------------------
+P = dict(
+    mode="hybrid",   # "hybrid" (nave + satélite), "sat", "ship"
+
+    # Bus base (ESA-like)
+    bus_w=60.0, bus_d=60.0, bus_h=80.0,
+
+    # Casco / nave
+    hull_scale=1.2, hull_facets=10,
+    prow_len=90.0, stern_len=60.0, deck_thk=3.0,
+    prow_round=0.45, stern_taper=0.15,
+    fin_span=120.0, fin_t=3.0, fin_sweep=22.0, fin_dihedral=12.0,
+
+    # Motores
+    engine_count=2, engine_len=90.0, engine_r=14.0,
+    engine_ring_t=3.0, engine_ring_w=5.0,
+
+    # Hiper anillo
+    hyper_ring_Do=140.0, hyper_ring_Di=100.0, hyper_ring_t=6.0,
+
+    # Paneles
+    panel_len=180.0, panel_w=50.0, panel_t=2.0,
+    panel_segments=3, panel_deploy_deg=35.0, panel_roll_deg=6.0,
+
+    # HGA
+    dish_diameter=60.0, dish_depth=12.0, dish_thickness=1.2, boom_len=45.0,
+
+    # Propulsores RCS
+    thruster_h=12.0, thruster_r1=4.0, thruster_r2=1.6,
+
+    # Torretas
+    turret_r=8.0, turret_h=10.0, cannon_len=24.0, cannon_r=2.2,
+    turret_positions=[  # (x,y,side) side: "top" o "bot"
+        (10.0,  18.0, "top"),
+        (-10.0, -18.0, "top"),
+        (-20.0,   0.0, "bot"),
+    ],
+
+    # Greebles
+    greeble_density=0.45,  # 0..1
+    greeble_h=(1.2, 4.0), greeble_a=(1.2, 6.0),
+
+    # Colores aproximados
+    col_hull=(0.75,0.76,0.78),
+    col_panel=(0.06,0.08,0.20),
+    col_metal=(0.70,0.70,0.72),
+    col_greeble=(0.55,0.56,0.58),
+    col_glow=(0.15,0.4,1.0),
+)
+
+random.seed(42)
+
+# ---------------------------
+# HELPERS
+# ---------------------------
+def add_obj(shape, name, color=None, group=None):
+    obj = doc.addObject("Part::Feature", name)
+    obj.Shape = shape
+    if color:
+        try: obj.ViewObject.ShapeColor = color
+        except: pass
+    if group: group.addObject(obj)
+    return obj
+
+def T(shape, v):  # translate
+    m = App.Matrix(); m.move(App.Vector(*v)); return shape.transformGeometry(m)
+
+def R(shape, axis, ang, center=(0,0,0)):
+    return shape.rotate(App.Vector(*center), App.Vector(*axis), ang)
+
+def centered_box(w,d,h):
+    return T(Part.makeBox(w,d,h), (-w/2.0,-d/2.0,-h/2.0))
+
+def cyl(h, r, axis='Z', center=False):
+    c = Part.makeCylinder(r, h)
+    if axis=='X': c = R(c,(0,1,0),90)
+    if axis=='Y': c = R(c,(1,0,0),90)
+    if center:
+        if axis=='Z': c = T(c,(0,0,-h/2))
+        if axis=='X': c = T(c,(-h/2,0,0))
+        if axis=='Y': c = T(c,(0,-h/2,0))
+    return c
+
+def cone(r1,r2,h,axis='Z',center=False):
+    c = Part.makeCone(r1,r2,h)
+    if axis=='X': c = R(c,(0,1,0),90)
+    if axis=='Y': c = R(c,(1,0,0),90)
+    if center:
+        if axis=='Z': c = T(c,(0,0,-h/2))
+        if axis=='X': c = T(c,(-h/2,0,0))
+        if axis=='Y': c = T(c,(0,-h/2,0))
+    return c
+
+def ring(h, Do, Di, axis='Z', center=False):
+    outer = cyl(h, Do/2.0, axis=axis, center=center)
+    inner = cyl(h+0.2, Di/2.0, axis=axis, center=center)
+    return outer.cut(inner)
+
+def poly_prism(points, h):  # extrude along Z thickness h (centered)
+    wire = Part.makePolygon([App.Vector(x,y,0) for (x,y) in points] + [App.Vector(points[0][0],points[0][1],0)])
+    face = Part.Face(wire)
+    solid = face.extrude(App.Vector(0,0,h))
+    return T(solid, (0,0,-h/2.0))
+
+def parabola_dish(d, depth, t, steps=48):
+    rmax = d/2.0
+    a = depth/(rmax*rmax)
+    curve_in = [(r, a*r*r) for r in [rmax*i/steps for i in range(0, steps+1)]]
+    curve_out = [(r, a*r*r + t) for r in [rmax*i/steps for i in range(steps, -1, -1)]]
+    profile = [(0,0)] + curve_in + curve_out + [(0,t)]
+    pts = [App.Vector(x,0,z) for (x,z) in profile]
+    wire = Part.makePolygon(pts+[pts[0]])
+    face = Part.Face(wire)
+    return face.revolve(App.Vector(0,0,0), App.Vector(0,0,1), 360)
+
+def polar(n, radius, start=0.0):
+    for i in range(n):
+        ang = math.radians(start + i*360.0/n)
+        yield (radius*math.cos(ang), radius*math.sin(ang))
+
+def rect_face_yz(hy, hz):
+    # Crea una cara rectangular en el plano YZ (x=0), centrada
+    pts = [App.Vector(0,-hy,-hz), App.Vector(0,hy,-hz), App.Vector(0,hy,hz), App.Vector(0,-hy,hz), App.Vector(0,-hy,-hz)]
+    wire = Part.makePolygon(pts)
+    return Part.Face(wire)
+
+# ---------------------------
+# GRUPOS
+# ---------------------------
+g_root  = doc.addObject("App::DocumentObjectGroup", "StarSat")
+g_bus   = doc.addObject("App::DocumentObjectGroup", "Bus_and_Systems"); g_root.addObject(g_bus)
+g_ship  = doc.addObject("App::DocumentObjectGroup", "ShipShell"); g_root.addObject(g_ship)
+g_weap  = doc.addObject("App::DocumentObjectGroup", "Turrets"); g_root.addObject(g_weap)
+g_acpl  = doc.addObject("App::DocumentObjectGroup", "Acoplamientos"); g_root.addObject(g_acpl)
+g_pan   = doc.addObject("App::DocumentObjectGroup", "SolarArrays"); g_root.addObject(g_pan)
+g_gree  = doc.addObject("App::DocumentObjectGroup", "Greebles"); g_root.addObject(g_gree)
+
+# ---------------------------
+# CONSTRUCTORES
+# ---------------------------
+def make_bus():
+    return add_obj(centered_box(P['bus_w'], P['bus_d'], P['bus_h']), "Bus", P['col_hull'], g_bus)
+
+def make_deck_and_hull():
+    # Medidas base
+    half_w = P['bus_w']*P['hull_scale']/2.0
+    half_d = P['bus_d']*P['hull_scale']/2.0
+    hull_h = P['bus_h']*P['hull_scale']
+
+    # Cubierta (deck) que une todo
+    deck_len = P['bus_w']*P['hull_scale'] + P['prow_len'] + P['stern_len']
+    deck_w   = P['bus_d']*P['hull_scale']*0.9
+    deck = centered_box(deck_len, deck_w, P['deck_thk'])
+
+    # Proa con loft (suave y afilada)
+    x_bus_front =  P['bus_w']/2.0
+    f0 = rect_face_yz(hy=half_d*0.50, hz=hull_h*0.48)  # cerca del bus
+    f1 = rect_face_yz(hy=half_d*P['prow_round']*0.40, hz=hull_h*P['prow_round']*0.35)  # punta
+    f0 = T(f0, (x_bus_front + 8.0, 0, 0))
+    f1 = T(f1, (x_bus_front + P['prow_len'] + 15.0, 0, 0))
+    prow = Part.makeLoft([f0, f1], True, False)
+
+    # Popa con loft (ligeramente estrechada)
+    x_bus_back = -P['bus_w']/2.0
+    b0 = rect_face_yz(hy=half_d*0.48, hz=hull_h*0.46)
+    b1 = rect_face_yz(hy=half_d*(1.0 - P['stern_taper']), hz=hull_h*(0.65 - P['stern_taper']*0.5))
+    b0 = T(b0, (x_bus_back - 8.0, 0, 0))
+    b1 = T(b1, (x_bus_back - P['stern_len'] - 15.0, 0, 0))
+    stern = Part.makeLoft([b0, b1], True, False)
+
+    hull = Part.makeCompound([prow, stern, deck])
+    return add_obj(hull, "Ship_Hull", P['col_hull'], g_ship)
+
+def make_fins():
+    fin_points = [
+        (0, -P['fin_span']/2.0),
+        (P['fin_span']*0.45, -P['fin_span']*0.12),
+        (P['fin_span']*0.55,  P['fin_span']*0.12),
+        (0,  P['fin_span']/2.0),
+    ]
+    fin = poly_prism(fin_points, P['fin_t'])
+    fin = R(fin, (0,1,0), P['fin_sweep'])
+    fin = R(fin, (1,0,0), P['fin_dihedral'])
+    finL = T(fin, (P['bus_w']/2.0, 0, 0))
+    finR = T(R(fin, (0,0,1), 180), (-P['bus_w']/2.0, 0, 0))
+    add_obj(finL, "Fin_Left", P['col_hull'], g_ship)
+    add_obj(finR, "Fin_Right", P['col_hull'], g_ship)
+
+def make_hyper_ring():
+    hyper = ring(P['hyper_ring_t'], P['hyper_ring_Do'], P['hyper_ring_Di'], axis='Y', center=True)
+    hyper = T(hyper, (P['bus_w']/2.0 + P['prow_len'] + 15.0, 0, 0))
+    add_obj(hyper, "HyperRing", P['col_metal'], g_acpl)
+
+def make_dock_port():
+    port = ring(4.0, 80.0, 56.0, axis='Z', center=True)
+    add_obj(T(port, (0,0,P['bus_h']/2.0+4.0)), "Dock_Top", P['col_metal'], g_acpl)
+
+def make_solar_arrays():
+    seg_len = P['panel_len']/float(P['panel_segments'])
+    # Marco base + piel de celdas
+    segment = centered_box(seg_len, P['panel_w'], P['panel_t'])
+    skin = centered_box(seg_len-3, P['panel_w']-3, P['panel_t']/2.0)
+    skin = T(skin, (0,0,-P['panel_t']/2.0 + P['panel_t']/8.0))
+    segment = Part.Compound([segment, skin])
+
+    wing = Part.makeCompound([T(segment, (i*(seg_len+1.5)+seg_len/2.0, 0, 0)) for i in range(P['panel_segments'])])
+    hinge = cyl(5.0, 2.8, axis='X', center=True)
+    wing = Part.Compound([wing, T(hinge, (-2.0, 0, 0))])
+
+    pivotL = (-P['bus_w']/2.0, 0, 0)
+    pivotR = ( P['bus_w']/2.0, 0, 0)
+    wingL = T(wing, (-1.0 - P['bus_w']/2.0, 0, 0))
+    wingR = T(wing, ( 1.0 + P['bus_w']/2.0, 0, 0))
+    objL = add_obj(wingL, "Solar_Left", P['col_panel'], g_pan)
+    objR = add_obj(wingR, "Solar_Right", P['col_panel'], g_pan)
+
+    # Componer rotaciones: despliegue (Y) + roll (Z) suave
+    rotL = App.Rotation(App.Vector(0,1,0),  P['panel_deploy_deg']).multiply(App.Rotation(App.Vector(0,0,1),  P['panel_roll_deg']))
+    rotR = App.Rotation(App.Vector(0,1,0), -P['panel_deploy_deg']).multiply(App.Rotation(App.Vector(0,0,1), -P['panel_roll_deg']))
+    objL.Placement = App.Placement(App.Vector(*pivotL), rotL, App.Vector(*pivotL))
+    objR.Placement = App.Placement(App.Vector(*pivotR), rotR, App.Vector(*pivotR))
+
+def make_HGA():
+    boom = cyl(P['boom_len'], 1.8, axis='X', center=False)
+    boom = T(boom, (P['bus_w']/2.0, 0, 0))
+    add_obj(boom, "HGA_Boom", P['col_metal'], g_bus)
+    g1 = ring(3.0, 34.0, 34.0-5.0, axis='Z', center=True)
+    g2 = ring(3.0, 28.0, 28.0-5.0, axis='X', center=True)
+    gimbal = Part.Compound([g1,g2])
+    gimbal = T(gimbal, (P['bus_w']/2.0 + P['boom_len'], 0, 0))
+    add_obj(gimbal, "HGA_Gimbal", P['col_metal'], g_bus)
+    dish = parabola_dish(P['dish_diameter'], P['dish_depth'], P['dish_thickness'])
+    dish = R(dish, (0,1,0), -18)
+    dish = T(dish, (P['bus_w']/2.0 + P['boom_len'], 0, 0))
+    add_obj(dish, "HGA_Dish", (1,1,1), g_bus)
+
+def make_RCS():
+    corners = [(1,1),(1,-1),(-1,1),(-1,-1)]
+    for i,(sx,sy) in enumerate(corners):
+        thr_top = cone(P['thruster_r1'], P['thruster_r2'], P['thruster_h'], axis='X', center=False)
+        thr_top = T(thr_top, (sx*P['bus_w']/2.0, sy*P['bus_d']/2.0,  P['bus_h']/2.0))
+        add_obj(thr_top, f"RCS_Top_{i+1}", P['col_metal'], g_bus)
+        thr_bot = cone(P['thruster_r1'], P['thruster_r2'], P['thruster_h'], axis='X', center=False)
+        thr_bot = T(thr_bot, (sx*P['bus_w']/2.0, sy*P['bus_d']/2.0, -P['bus_h']/2.0))
+        add_obj(thr_bot, f"RCS_Bot_{i+1}", P['col_metal'], g_bus)
+
+def make_engine_unit(k, x0, y0):
+    # Geometría base
+    nozzle = cone(P['engine_r']*1.15, P['engine_r']*0.65, P['engine_len']*0.35, axis='X', center=False)
+    tube   = cyl(P['engine_len']*0.60, P['engine_r'], axis='X', center=False)
+    ring1  = ring(P['engine_ring_w'], P['engine_r']*2.25, P['engine_r']*1.8, axis='X', center=True)
+    ring2  = ring(P['engine_ring_w']*0.8, P['engine_r']*1.65, P['engine_r']*1.35, axis='X', center=True)
+
+    eng = Part.Compound([
+        T(nozzle, (0,0,0)),
+        T(tube,   (P['engine_len']*0.35,0,0)),
+        T(ring1,  (P['engine_len']*0.25,0,0)),
+        T(ring2,  (P['engine_len']*0.65,0,0)),
+    ])
+    eng = T(eng, (x0, y0, 0))
+    add_obj(eng, f"MainEngine_{k+1}", P['col_metal'], g_ship)
+
+    glow = cyl(P['engine_len']*0.22, P['engine_r']*0.7, axis='X', center=False)
+    glow = T(glow, (x0 + P['engine_len']*0.10, y0, 0))
+    add_obj(glow, f"EngineGlow_{k+1}", P['col_glow'], g_ship)
+
+def make_engines():
+    base_x = -P['bus_w']/2.0 - P['stern_len'] - 25.0
+    for k in range(P['engine_count']):
+        off = (k-(P['engine_count']-1)/2.0)* (P['engine_r']*2.6)
+        make_engine_unit(k, base_x, off)
+
+def make_turrets():
+    # Base Z en top/bot del bus
+    z_top =  P['bus_h']/2.0 + P['deck_thk']/2.0
+    z_bot = -P['bus_h']/2.0 - P['deck_thk']/2.0
+    for i,(x_off, y_off, side) in enumerate(P['turret_positions']):
+        z = z_top if side=="top" else z_bot
+        base = cyl(P['turret_h'], P['turret_r'], axis='Z', center=True)
+        base = T(base, (x_off, y_off, z + (P['turret_h']/2.0 if side=="top" else -P['turret_h']/2.0)))
+        add_obj(base, f"TurretBase_{i+1}", P['col_metal'], g_weap)
+
+        # Montura y cañones dobles
+        mount = cyl(4.0, P['turret_r']*0.75, axis='Z', center=True)
+        mount = T(mount, (x_off, y_off, z + (6.0 if side=="top" else -6.0)))
+        add_obj(mount, f"TurretMount_{i+1}", P['col_metal'], g_weap)
+
+        sep = P['turret_r']*0.6
+        for j,dy in enumerate([-sep/2.0, sep/2.0]):
+            barrel = cyl(P['cannon_len'], P['cannon_r'], axis='X', center=False)
+            barrel = T(barrel, (x_off + P['turret_r']*0.8, y_off + dy, z + (2.0 if side=="top" else -2.0)))
+            tip = cone(P['cannon_r']*1.2, P['cannon_r']*0.7, 4.0, axis='X', center=False)
+            tip = T(tip, (x_off + P['turret_r']*0.8 + P['cannon_len'], y_off + dy, z + (2.0 if side=="top" else -2.0)))
+            add_obj(Part.Compound([barrel, tip]), f"Cannon_{i+1}_{j+1}", P['col_metal'], g_weap)
+
+def make_greebles():
+    # Distribuir en la cubierta superior (zona deck)
+    density = P['greeble_density']
+    if density <= 0: return
+    deck_len = P['bus_w']*P['hull_scale'] + P['prow_len'] + P['stern_len']
+    x_min = -deck_len/2.0 + 8.0; x_max = deck_len/2.0 - 8.0
+    y_min = -P['bus_d']*0.35;    y_max =  P['bus_d']*0.35
+    z     =  P['bus_h']/2.0 + P['deck_thk']/2.0 + 0.6
+
+    area = (x_max-x_min)*(y_max-y_min)
+    n = int(area * 0.0025 * density)  # escala de población
+
+    for i in range(n):
+        w = random.uniform(*P['greeble_a'])
+        d = random.uniform(*P['greeble_a'])*0.6
+        h = random.uniform(*P['greeble_h'])
+        x = random.uniform(x_min, x_max)
+        y = random.uniform(y_min, y_max)
+        # Evitar centro de cubierta
+        if abs(y) < 6.0 and abs(x) < 10.0: continue
+        g = centered_box(w, d, h)
+        g = T(g, (x, y, z + h/2.0))
+        # Chance de cilindro como válvula
+        if random.random() < 0.25:
+            c = cyl(h*0.9, min(w,d)*0.35, axis='Z', center=True)
+            c = T(c, (x + (w*0.15*(1 if random.random()<0.5 else -1)), y, z + h + h*0.45))
+            comp = Part.makeCompound([g, c])
+            add_obj(comp, f"GreebleCyl_{i}", P['col_greeble'], g_gree)
+        else:
+            add_obj(g, f"Greeble_{i}", P['col_greeble'], g_gree)
+
+# ---------------------------
+# ENSAMBLADOR
+# ---------------------------
+def build_starsat(mode):
+    # Bus siempre presente como referencia estructural
+    bus_obj = make_bus()
+
+    if mode in ("ship", "hybrid"):
+        make_deck_and_hull()
+        make_fins()
+        make_hyper_ring()
+        make_turrets()
+        make_engines()
+        make_greebles()
+
+    if mode in ("sat", "hybrid"):
+        make_solar_arrays()
+        make_HGA()
+        make_RCS()
+        make_dock_port()
+
+# ---------------------------
+# EJECUCIÓN
+# ---------------------------
+build_starsat(P['mode'])
+doc.recompute()
+
+# Vista
+try:
+    Gui.ActiveDocument.ActiveView.viewIsometric()
+    Gui.SendMsgToActiveView("ViewFit")
+except Exception:
+    pass

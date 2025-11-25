@@ -1,0 +1,300 @@
+# -*- coding: utf-8 -*-
+# Macro: StarSat (Satélite + Nave estilo Star Wars)
+# Autor: Copilot para Víctor (Madrid)
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part, math, random
+
+doc = App.newDocument("StarSat")
+
+# ---------------------------
+# PARÁMETROS
+# ---------------------------
+P = dict(
+    mode="hybrid",   # "hybrid" (nave + satélite), "sat", "ship"
+    # Bus base (ESA-like)
+    bus_w=60.0, bus_d=60.0, bus_h=80.0,
+    # Paneles
+    panel_len=180.0, panel_w=50.0, panel_t=2.0,
+    panel_segments=3, panel_deploy_deg=35.0,
+    # HGA
+    dish_diameter=60.0, dish_depth=12.0, dish_thickness=1.2, boom_len=45.0,
+    # Propulsores RCS
+    thruster_h=12.0, thruster_r1=4.0, thruster_r2=1.6,
+    # Parker-like
+    p_bus_w=90.0, p_bus_d=90.0, p_bus_h=120.0,
+    shield_d=220.0, shield_thk=10.0, shield_cone=16.0, shield_gap=28.0,
+    # Nave
+    hull_scale=1.2, hull_facets=10, prow_len=90.0, stern_len=60.0, deck_thk=3.0,
+    fin_span=120.0, fin_t=3.0, fin_sweep=22.0, fin_dihedral=12.0,
+    engine_count=2, engine_len=90.0, engine_r=14.0,
+    hyper_ring_Do=140.0, hyper_ring_Di=100.0, hyper_ring_t=6.0, hyper_n=12, hyper_pcd=120.0,
+    turret_r=8.0, turret_h=10.0, cannon_len=24.0, cannon_r=2.2,
+    greeble_density=0.45,  # 0..1
+    # Colores aproximados
+    col_hull=(0.75,0.76,0.78),
+    col_panel=(0.06,0.08,0.20),
+    col_metal=(0.70,0.70,0.72),
+    col_greeble=(0.55,0.56,0.58),
+    col_glow=(0.15,0.4,1.0),
+)
+
+random.seed(42)
+
+# ---------------------------
+# HELPERS
+# ---------------------------
+def add_obj(shape, name, color=None, group=None):
+    obj = doc.addObject("Part::Feature", name)
+    obj.Shape = shape
+    if color:
+        try: obj.ViewObject.ShapeColor = color
+        except: pass
+    if group: group.addObject(obj)
+    return obj
+
+def T(shape, v):  # translate
+    m = App.Matrix(); m.move(App.Vector(*v)); return shape.transformGeometry(m)
+
+def R(shape, axis, ang, center=(0,0,0)):
+    return shape.rotate(App.Vector(*center), App.Vector(*axis), ang)
+
+def centered_box(w,d,h):
+    return T(Part.makeBox(w,d,h), (-w/2.0,-d/2.0,-h/2.0))
+
+def cyl(h, r, axis='Z', center=False):
+    c = Part.makeCylinder(r, h)
+    if axis=='X': c = R(c,(0,1,0),90)
+    if axis=='Y': c = R(c,(1,0,0),90)
+    if center:
+        if axis=='Z': c = T(c,(0,0,-h/2))
+        if axis=='X': c = T(c,(-h/2,0,0))
+        if axis=='Y': c = T(c,(0,-h/2,0))
+    return c
+
+def cone(r1,r2,h,axis='Z',center=False):
+    c = Part.makeCone(r1,r2,h)
+    if axis=='X': c = R(c,(0,1,0),90)
+    if axis=='Y': c = R(c,(1,0,0),90)
+    if center:
+        if axis=='Z': c = T(c,(0,0,-h/2))
+        if axis=='X': c = T(c,(-h/2,0,0))
+        if axis=='Y': c = T(c,(0,-h/2,0))
+    return c
+
+def ring(h, Do, Di, axis='Z', center=False):
+    outer = cyl(h, Do/2.0, axis=axis, center=center)
+    inner = cyl(h+0.2, Di/2.0, axis=axis, center=center)
+    return outer.cut(inner)
+
+def poly_prism(points, h):  # extrude along Z thickness h (centered)
+    wire = Part.makePolygon([App.Vector(x,y,0) for (x,y) in points] + [App.Vector(points[0][0],points[0][1],0)])
+    face = Part.Face(wire)
+    solid = face.extrude(App.Vector(0,0,h))
+    return T(solid, (0,0,-h/2.0))
+
+def parabola_dish(d, depth, t, steps=48):
+    rmax = d/2.0
+    a = depth/(rmax*rmax)
+    curve_in = [(r, a*r*r) for r in [rmax*i/steps for i in range(0, steps+1)]]
+    curve_out = [(r, a*r*r + t) for r in [rmax*i/steps for i in range(steps, -1, -1)]]
+    profile = [(0,0)] + curve_in + curve_out + [(0,t)]
+    pts = [App.Vector(x,0,z) for (x,z) in profile]
+    wire = Part.makePolygon(pts+[pts[0]])
+    face = Part.Face(wire)
+    return face.revolve(App.Vector(0,0,0), App.Vector(0,0,1), 360)
+
+def polar(n, radius, start=0.0):
+    for i in range(n):
+        ang = math.radians(start + i*360.0/n)
+        yield (radius*math.cos(ang), radius*math.sin(ang))
+
+# ---------------------------
+# GRUPOS
+# ---------------------------
+g_root  = doc.addObject("App::DocumentObjectGroup", "StarSat")
+g_bus   = doc.addObject("App::DocumentObjectGroup", "Bus_and_Systems"); g_root.addObject(g_bus)
+g_ship  = doc.addObject("App::DocumentObjectGroup", "ShipShell"); g_root.addObject(g_ship)
+g_weap  = doc.addObject("App::DocumentObjectGroup", "Turrets"); g_root.addObject(g_weap)
+g_acpl  = doc.addObject("App::DocumentObjectGroup", "Acoplamientos"); g_root.addObject(g_acpl)
+g_pan   = doc.addObject("App::DocumentObjectGroup", "SolarArrays"); g_root.addObject(g_pan)
+g_gree  = doc.addObject("App::DocumentObjectGroup", "Greebles"); g_root.addObject(g_gree)
+
+# ---------------------------
+# 1) CASCO NAVE + BUS
+# ---------------------------
+# Bus central paramétrico (rectangular)
+bus = add_obj(centered_box(P['bus_w'], P['bus_d'], P['bus_h']), "Bus", P['col_hull'], g_bus)
+
+# Casco facetado estilo nave: prisma proa + prisma popa + cubierta
+facets = P['hull_facets']
+half_w = P['bus_w']*P['hull_scale']/2.0
+half_d = P['bus_d']*P['hull_scale']/2.0
+hull_h = P['bus_h']*P['hull_scale']
+
+prow = poly_prism([
+    (-P['prow_len']*0.2, -half_d*0.6),
+    ( P['prow_len']*0.8, -half_d*0.15),
+    ( P['prow_len']*0.8,  half_d*0.15),
+    (-P['prow_len']*0.2,  half_d*0.6),
+], hull_h)
+
+stern = poly_prism([
+    (-P['stern_len']*0.6, -half_d*0.5),
+    ( P['stern_len']*0.6, -half_d*0.35),
+    ( P['stern_len']*0.6,  half_d*0.35),
+    (-P['stern_len']*0.6,  half_d*0.5),
+], hull_h)
+
+prow = T(prow, ( P['bus_w']/2.0 + 10.0, 0, 0))
+stern = T(stern, (-P['bus_w']/2.0 - 10.0, 0, 0))
+deck = centered_box(P['bus_w']*P['hull_scale']+P['prow_len']+P['stern_len'], P['bus_d']*P['hull_scale']*0.9, P['deck_thk'])
+hull = Part.makeCompound([prow, stern, deck])
+add_obj(hull, "Ship_Hull", P['col_hull'], g_ship)
+
+# Aletas laterales (estilo alas)
+fin_points = [
+    (0, -P['fin_span']/2.0),
+    (P['fin_span']*0.45, -P['fin_span']*0.12),
+    (P['fin_span']*0.55,  P['fin_span']*0.12),
+    (0,  P['fin_span']/2.0),
+]
+fin = poly_prism(fin_points, P['fin_t'])
+fin = R(fin, (0,1,0), P['fin_sweep'])
+fin = R(fin, (1,0,0), P['fin_dihedral'])
+finL = T(fin, (P['bus_w']/2.0, 0, 0))
+finR = T(R(fin, (0,0,1), 180), (-P['bus_w']/2.0, 0, 0))
+add_obj(finL, "Fin_Left", P['col_hull'], g_ship)
+add_obj(finR, "Fin_Right", P['col_hull'], g_ship)
+
+# Anillo “hiperdrive” frontal (acoplamiento visual y estructural)
+hyper = ring(P['hyper_ring_t'], P['hyper_ring_Do'], P['hyper_ring_Di'], axis='Y', center=True)
+hyper = T(hyper, (P['bus_w']/2.0 + P['prow_len'] + 15.0, 0, 0))
+add_obj(hyper, "HyperRing", P['col_metal'], g_acpl)
+
+# Puerto de acoplamiento superior (anillo atornillado)
+port = ring(4.0, 80.0, 56.0, axis='Z', center=True)
+add_obj(T(port, (0,0,P['bus_h']/2.0+4.0)), "Dock_Top", P['col_metal'], g_acpl)
+
+# ---------------------------
+# 2) SISTEMAS SATELITALES
+# ---------------------------
+# Paneles solares plegables estilo “ala”
+seg_len = P['panel_len']/float(P['panel_segments'])
+segment = centered_box(seg_len, P['panel_w'], P['panel_t'])
+skin = centered_box(seg_len-3, P['panel_w']-3, P['panel_t']/2.0)
+skin = T(skin, (0,0,-P['panel_t']/2.0 + P['panel_t']/8.0))
+segment = Part.Compound([segment, skin])
+
+wing = Part.makeCompound([T(segment, (i*(seg_len+1.5)+seg_len/2.0, 0, 0)) for i in range(P['panel_segments'])])
+hinge = cyl(5.0, 2.8, axis='X', center=True)
+wing = Part.Compound([wing, T(hinge, (-2.0, 0, 0))])
+
+pivotL = (-P['bus_w']/2.0, 0, 0)
+pivotR = ( P['bus_w']/2.0, 0, 0)
+wingL = T(wing, (-1.0 - P['bus_w']/2.0, 0, 0))
+wingR = T(wing, ( 1.0 + P['bus_w']/2.0, 0, 0))
+objL = add_obj(wingL, "Solar_Left", P['col_panel'], g_pan)
+objR = add_obj(wingR, "Solar_Right", P['col_panel'], g_pan)
+objL.Placement = App.Placement(App.Vector(*pivotL), App.Rotation(App.Vector(0,1,0),  P['panel_deploy_deg']), App.Vector(*pivotL))
+objR.Placement = App.Placement(App.Vector(*pivotR), App.Rotation(App.Vector(0,1,0), -P['panel_deploy_deg']), App.Vector(*pivotR))
+
+# Antena HGA sobre brazo
+boom = cyl(P['boom_len'], 1.8, axis='X', center=False)
+boom = T(boom, (P['bus_w']/2.0, 0, 0))
+add_obj(boom, "HGA_Boom", P['col_metal'], g_bus)
+g1 = ring(3.0, 34.0, 34.0-5.0, axis='Z', center=True)
+g2 = ring(3.0, 28.0, 28.0-5.0, axis='X', center=True)
+gimbal = Part.Compound([g1,g2])
+gimbal = T(gimbal, (P['bus_w']/2.0 + P['boom_len'], 0, 0))
+add_obj(gimbal, "HGA_Gimbal", P['col_metal'], g_bus)
+dish = parabola_dish(P['dish_diameter'], P['dish_depth'], P['dish_thickness'])
+dish = R(dish, (0,1,0), -18)
+dish = T(dish, (P['bus_w']/2.0 + P['boom_len'], 0, 0))
+add_obj(dish, "HGA_Dish", (1,1,1), g_bus)
+
+# RCS thrusters en esquinas
+corners = [(1,1),(1,-1),(-1,1),(-1,-1)]
+for i,(sx,sy) in enumerate(corners):
+    thr_top = cone(P['thruster_r1'], P['thruster_r2'], P['thruster_h'], axis='X', center=False)
+    thr_top = T(thr_top, (sx*P['bus_w']/2.0, sy*P['bus_d']/2.0,  P['bus_h']/2.0))
+    add_obj(thr_top, f"RCS_Top_{i+1}", P['col_metal'], g_bus)
+    thr_bot = cone(P['thruster_r1'], P['thruster_r2'], P['thruster_h'], axis='X', center=False)
+    thr_bot = T(thr_bot, (sx*P['bus_w']/2.0, sy*P['bus_d']/2.0, -P['bus_h']/2.0))
+    add_obj(thr_bot, f"RCS_Bot_{i+1}", P['col_metal'], g_bus)
+
+# ---------------------------
+# 3) MOTORES PRINCIPALES TIPO NAVE
+# ---------------------------
+for k in range(P['engine_count']):
+    off = (k-(P['engine_count']-1)/2.0)* (P['engine_r']*2.6)
+    nozzle = cone(P['engine_r']*1.15, P['engine_r']*0.65, P['engine_len']*0.35, axis='X', center=False)
+    tube   = cyl(P['engine_len']*0.65, P['engine_r'], axis='X', center=False)
+    eng = Part.Compound([T(nozzle, (0,0,0)), T(tube, (P['engine_len']*0.35,0,0))])
+    eng = T(eng, (-P['bus_w']/2.0 - P['stern_len'] - 25.0, off, 0))
+    add_obj(eng, f"MainEngine_{k+1}", P['col_metal'], g_ship)
+    # brillo interno
+    glow = cyl(P['engine_len']*0.25, P['engine_r']*0.7, axis='X', center=False)
+    glow = T(glow, (-P['bus_w']/2.0 - P['stern_len'] - 25.0 + P['engine_len']*0.10, off, 0))
+    add_obj(glow, f"EngineGlow_{k+1}", P['col_glow'], g_ship)
+
+# ---------------------------
+# 4) TORRETAS Y CAÑONES
+# ---------------------------
+def make_turret(name, base_r, h, cannon_len, cannon_r, pos):
+    base = cyl(h, base_r, axis='Z', center=True)
+    pod  = centered_box(base_r*1.2, base_r*0.8, h*0.6)
+    pod  = T(pod, (base_r*0.6, 0, 0))
+    gun1 = cyl(cannon_len, cannon_r, axis='X', center=False)
+    gun1 = T(gun1, (base_r*0.6,  cannon_r*1.6, 0))
+    gun2 = cyl(cannon_len, cannon_r, axis='X', center=False)
+    gun2 = T(gun2, (base_r*0.6, -cannon_r*1.6, 0))
+    turret = Part.Compound([base,pod,gun1,gun2])
+    turret = T(turret, pos)
+    return add_obj(turret, name, P['col_metal'], g_weap)
+
+make_turret("Turret_Top", P['turret_r'], P['turret_h'], P['cannon_len'], P['cannon_r'], (0,0,P['bus_h']/2.0 + 10.0))
+make_turret("Turret_Bot", P['turret_r'], P['turret_h'], P['cannon_len'], P['cannon_r'], (0,0,-P['bus_h']/2.0 - 10.0))
+
+# ---------------------------
+# 5) GREEBLES (detallitos)
+# ---------------------------
+def rand(a,b): return a + (b-a)*random.random()
+def add_greeble_box(area_w, area_d, area_h, count, origin):
+    for i in range(count):
+        w = rand(2.0, area_w*0.18); d = rand(2.0, area_d*0.18); h = rand(1.0, area_h*0.6)
+        x = rand(-area_w/2.0, area_w/2.0 - w)
+        y = rand(-area_d/2.0, area_d/2.0 - d)
+        z = rand(-area_h/2.0, area_h/2.0)
+        b = centered_box(w,d,h)
+        b = T(b, (x+w/2.0, y+d/2.0, area_h/2.0 + h/2.0))
+        b = T(b, origin)
+        add_obj(b, f"Greeble_{random.randint(0,99999)}", P['col_greeble'], g_gree)
+
+# densidad en caras superior/trasera del bus
+dens = P['greeble_density']
+add_greeble_box(P['bus_w'], P['bus_d'], 2.0, int(20*dens), (0,0,P['bus_h']/2.0))
+add_greeble_box(P['bus_w'], P['bus_d'], 2.0, int(14*dens), (0,0,-P['bus_h']/2.0))
+
+# ---------------------------
+# 6) ACOPLAMIENTOS ADICIONALES
+# ---------------------------
+# Anillo frontal de acoplamiento satelital dentro del hiper-ring
+bolt_circle = []
+pcd = P['hyper_pcd']
+for (y,z) in polar(P['hyper_n'], pcd/2.0, start=0.0):
+    bolt = cyl(6.0, 2.0, axis='Y', center=True)
+    bolt = T(bolt, (P['bus_w']/2.0 + P['prow_len'] + 15.0, y, z))
+    bolt_circle.append(bolt)
+add_obj(Part.makeCompound(bolt_circle), "HyperRing_Bolts", P['col_metal'], g_acpl)
+
+# Puerto inferior de atraque
+dock_low = ring(4.0, 70.0, 45.0, axis='Z', center=True)
+add_obj(T(dock_low, (0,0,-P['bus_h']/2.0-6.0)), "Dock_Bottom", P['col_metal'], g_acpl)
+
+# ---------------------------
+doc.recompute()
+try: Gui.ActiveDocument.ActiveView.fitAll()
+except: pass
+
+print("StarSat generado. Ajusta parámetros en P (modo, longitudes, ángulos, densidad de greebles).")
