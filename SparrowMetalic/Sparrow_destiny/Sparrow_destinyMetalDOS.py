@@ -1,5 +1,3 @@
-# StarSat CC Advanced — Satélite / nave modular con capas Carbon‑Carbon, ablativos y protección radiológica
-# Autor: Copilot para Víctor (Madrid)
 import FreeCAD as App, FreeCADGui as Gui, Part, math, random
 doc = App.newDocument("StarSat_CC_Advanced")
 
