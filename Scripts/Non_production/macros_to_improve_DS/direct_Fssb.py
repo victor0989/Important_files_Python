@@ -1,0 +1,331 @@
+# -*- coding: utf-8 -*-
+# Macro FreeCAD: Direct Fusion Drive con propulsor modular integrado
+# Autor: Víctor + Copilot
+# Unidades: mm, eje longitudinal = X
+
+import FreeCAD as App, FreeCADGui as Gui, Part, math
+
+doc_name = "Direct_Fusion_Drive"
+if App.ActiveDocument is None or App.ActiveDocument.Label != doc_name:
+    App.newDocument(doc_name)
+doc = App.ActiveDocument
+
+# ============
+# Parámetros
+# ============
+P = {
+    # Fuselaje (muy grande para nave espacial)
+    "nose_len": 1500.0, "nose_base_d": 1200.0,
+    "mid_len": 2700.0, "mid_d": 1800.0,
+    "rear_len": 1500.0, "rear_d": 2250.0,
+    "hull_t": 20.0,
+
+    # Cabina
+    "cockpit_w": 1650.0, "cockpit_h": 750.0, "cockpit_l": 1200.0, "cockpit_x0": 1050.0,
+
+    # Ventanas
+    "win_w": 1050.0, "win_h": 450.0, "win_th": 30.0,
+    "win_y_off": 0.5*(1650.0/2.0 - 450.0/2.0), "win_z": 0.0,
+
+    # Reactor (muy grande y potente)
+    "reactor_d": 1500.0, "reactor_l": 1800.0, "reactor_cx": 4800.0,
+    "ring_h": 60.0, "ring_ro": 825.0, "ring_ri": 750.0, "ring_n": 10, "ring_pitch": 180.0,
+
+    # Coils (más bobinas para potencia)
+    "coil_rect_w": 150.0, "coil_rect_h": 150.0, "coil_R": 900.0,
+    "coil_n": 8, "coil_span": 1500.0,
+
+    # Blindajes
+    "moderator_t": 225.0, "moderator_gap": 45.0, "moderator_over": 450.0,
+    "tungsten_post_t": 20.0,
+
+    # Boquilla (avanzada, múltiple)
+    "nozzle_throat_d": 600.0, "nozzle_exit_d": 1800.0, "nozzle_l": 1350.0,
+    "nozzle_cx": 5400.0, "nozzle_fillet_r": 75.0,
+
+    # Truss boquilla
+    "truss_n": 5, "truss_tube_w": 150.0, "truss_R_attach": 1050.0,
+
+    # Tanques (más grandes)
+    "tank_d": 600.0, "tank_l": 1350.0, "tank_cx": 3000.0, "tank_cy": 450.0, "tank_cz": -300.0,
+
+    # Tren
+    "leg_L_fold": 750.0, "leg_L_ext": 1200.0, "leg_foot_d": 300.0,
+    "leg_side_x1": 1950.0, "leg_side_x2": 3600.0, "leg_side_y": 1200.0,
+    "leg_front_x": 750.0, "leg_front_y": 0.0, "leg_front_z": -(1800.0/2.0) + 75.0,
+
+    # Alas / empenaje (más grandes)
+    "wing_root_w": 1200.0, "wing_tip_w": 300.0, "wing_chord": 900.0,
+    "fin_h": 750.0, "fin_base": 450.0,
+
+    # Propulsor modular
+    "prop_cx": 5700.0, "prop_cy": 0.0, "prop_cz": 0.0
+}
+
+# ============
+# Utilidades
+# ============
+X_AXIS = App.Vector(1,0,0)
+Y_AXIS = App.Vector(0,1,0)
+Z_AXIS = App.Vector(0,0,1)
+
+def rot_to_x(): return App.Rotation(Y_AXIS, 90)
+def add_obj(shape, label): o = doc.addObject("Part::Feature", label); o.Shape = shape; return o
+
+def make_cyl_x(d, L, cx=0.0, cy=0.0, cz=0.0, label="CylX"):
+    r = d/2.0
+    cyl = Part.makeCylinder(r, L)
+    cyl.Placement = App.Placement(App.Vector(cx - L/2.0, cy, cz), rot_to_x())
+    return add_obj(cyl, label)
+
+def make_cone_x(d1, d2, L, cx=0.0, cy=0.0, cz=0.0, label="ConeX"):
+    r1, r2 = d1/2.0, d2/2.0
+    cone = Part.makeCone(r1, r2, L)
+    cone.Placement = App.Placement(App.Vector(cx - L/2.0, cy, cz), rot_to_x())
+    return add_obj(cone, label)
+
+def make_torus_x(R, r, cx=0.0, cy=0.0, cz=0.0, label="TorusX"):
+    tor = Part.makeTorus(R, r)
+    tor.Placement = App.Placement(App.Vector(cx, cy, cz), rot_to_x())
+    return add_obj(tor, label)
+
+def make_box(w, d, h, cx=0.0, cy=0.0, cz=0.0, label="Box"):
+    b = Part.makeBox(w, d, h)
+    b.Placement = App.Placement(App.Vector(cx - w/2.0, cy - d/2.0, cz - h/2.0), App.Rotation())
+    return add_obj(b, label)
+
+def make_hollow_from_offset(outer_shape, t, label="Shell"):
+    try:
+        inner = outer_shape.makeOffsetShape(-t, 0.01, join=2, fill=True)
+        shell = outer_shape.cut(inner)
+        return add_obj(shell, label)
+    except:
+        return add_obj(outer_shape, label + "_fallback")
+
+def create_hull():
+    nose = make_cone_x(P["nose_base_d"], 0.0, P["nose_len"], cx=P["nose_len"]/2.0, label="Nose")
+    mid  = make_cyl_x(P["mid_d"], P["mid_len"], cx=P["nose_len"] + P["mid_len"]/2.0, label="Mid")
+    rear = make_cyl_x(P["rear_d"], P["rear_len"], cx=P["nose_len"] + P["mid_len"] + P["rear_len"]/2.0, label="Rear")
+    fuse_fuselage_shape = nose.Shape.fuse(mid.Shape).fuse(rear.Shape)
+    hull = make_hollow_from_offset(fuse_fuselage_shape, P["hull_t"], label="Hull_Shell")
+
+    # Añadir estructuras internas para volumen y soporte de impresión
+    internal_bulkheads = []
+    for i in range(1, 4):
+        z = P["nose_len"] + i * P["mid_len"]/4.0
+        bulkhead = make_cyl_x(P["mid_d"] - 2*P["hull_t"], P["hull_t"], cx=z, label=f"Bulkhead_{i}")
+        internal_bulkheads.append(bulkhead)
+
+    # Costillas longitudinales
+    ribs = []
+    for i in range(6):
+        angle = 60 * i
+        rib = make_cyl_x(P["hull_t"], P["mid_len"], cx=P["nose_len"] + P["mid_len"]/2.0, cy=(P["mid_d"]/2.0 - P["hull_t"]) * math.cos(math.radians(angle)), cz=(P["mid_d"]/2.0 - P["hull_t"]) * math.sin(math.radians(angle)), label=f"Rib_{i}")
+        ribs.append(rib)
+
+    return hull, fuse_fuselage_shape, internal_bulkheads, ribs
+
+def create_cockpit():
+    cockpit = make_box(P["cockpit_w"], P["cockpit_l"], P["cockpit_h"], cx=P["cockpit_x0"] + P["cockpit_l"]/2.0, cy=0.0, cz=0.0, label="Cockpit")
+    # Ventanas: simplificadas como recortes
+    win_left = make_box(P["win_w"], P["win_th"], P["win_h"], cx=P["cockpit_x0"] + P["cockpit_l"]/2.0, cy=-P["cockpit_w"]/2.0 + P["win_y_off"] + P["win_h"]/2.0, cz=P["win_z"], label="Win_Left")
+    win_right = make_box(P["win_w"], P["win_th"], P["win_h"], cx=P["cockpit_x0"] + P["cockpit_l"]/2.0, cy=P["cockpit_w"]/2.0 - P["win_y_off"] - P["win_h"]/2.0, cz=P["win_z"], label="Win_Right")
+    cockpit.Shape = cockpit.Shape.cut(win_left.Shape).cut(win_right.Shape)
+    return cockpit
+
+def create_reactor():
+    reactor = make_cyl_x(P["reactor_d"], P["reactor_l"], cx=P["reactor_cx"], label="Reactor")
+    # Anillos
+    rings = []
+    for i in range(P["ring_n"]):
+        z = P["reactor_cx"] - P["reactor_l"]/2.0 + P["ring_pitch"] * (i + 0.5)
+        ring = make_torus_x(P["ring_ro"], P["ring_h"]/2.0, cx=z, label=f"Ring_{i}")
+        rings.append(ring)
+    # Bobinas
+    coils = []
+    for i in range(P["coil_n"]):
+        angle = 360.0 / P["coil_n"] * i
+        coil = make_box(P["coil_rect_w"], P["coil_rect_h"], P["coil_span"], cx=P["reactor_cx"], cy=P["coil_R"] * math.cos(math.radians(angle)), cz=P["coil_R"] * math.sin(math.radians(angle)), label=f"Coil_{i}")
+        coil.Placement = App.Placement(coil.Placement.Base, App.Rotation(Z_AXIS, angle))
+        coils.append(coil)
+    return reactor, rings, coils
+
+def create_shielding():
+    moderator_outer = make_cyl_x(P["reactor_d"] + 2*P["moderator_over"], P["reactor_l"] + 2*P["moderator_over"], cx=P["reactor_cx"], label="Moderator_Outer")
+    moderator_inner = make_cyl_x(P["reactor_d"] + 2*P["moderator_gap"], P["reactor_l"] + 2*P["moderator_gap"], cx=P["reactor_cx"], label="Moderator_Inner")
+    moderator = moderator_outer.Shape.cut(moderator_inner.Shape)
+    moderator_obj = add_obj(moderator, "Moderator")
+
+    # Tungsten posts: simplificados como cilindros
+    tungsten_posts = []
+    for i in range(6):
+        angle = 60 * i
+        post = make_cyl_x(P["tungsten_post_t"], P["reactor_l"], cx=P["reactor_cx"], cy=(P["reactor_d"]/2.0 + P["moderator_gap"]) * math.cos(math.radians(angle)), cz=(P["reactor_d"]/2.0 + P["moderator_gap"]) * math.sin(math.radians(angle)), label=f"Tungsten_Post_{i}")
+        tungsten_posts.append(post)
+    return moderator_obj, tungsten_posts
+
+def create_nozzle_and_truss():
+    nozzle = make_cone_x(P["nozzle_throat_d"], P["nozzle_exit_d"], P["nozzle_l"], cx=P["nozzle_cx"], label="Nozzle")
+    # Truss: simplificado como tubos
+    truss_tubes = []
+    for i in range(P["truss_n"]):
+        angle = 360.0 / P["truss_n"] * i
+        tube = make_cyl_x(P["truss_tube_w"], P["nozzle_l"], cx=P["nozzle_cx"], cy=P["truss_R_attach"] * math.cos(math.radians(angle)), cz=P["truss_R_attach"] * math.sin(math.radians(angle)), label=f"Truss_{i}")
+        truss_tubes.append(tube)
+    return nozzle, truss_tubes
+
+def create_tank():
+    tank = make_cyl_x(P["tank_d"], P["tank_l"], cx=P["tank_cx"], cy=P["tank_cy"], cz=P["tank_cz"], label="Tank")
+    return tank
+
+def create_landing_gear():
+    legs = []
+    # Piernas laterales
+    for side in [-1, 1]:
+        leg = make_cyl_x(P["leg_foot_d"], P["leg_L_ext"], cx=P["leg_side_x1"], cy=side * P["leg_side_y"], cz=-P["leg_L_ext"]/2.0, label=f"Leg_Side_{side}")
+        legs.append(leg)
+        leg2 = make_cyl_x(P["leg_foot_d"], P["leg_L_ext"], cx=P["leg_side_x2"], cy=side * P["leg_side_y"], cz=-P["leg_L_ext"]/2.0, label=f"Leg_Side2_{side}")
+        legs.append(leg2)
+    # Pierna frontal
+    leg_front = make_cyl_x(P["leg_foot_d"], P["leg_L_ext"], cx=P["leg_front_x"], cy=P["leg_front_y"], cz=P["leg_front_z"] - P["leg_L_ext"]/2.0, label="Leg_Front")
+    legs.append(leg_front)
+    return legs
+
+def create_wings_and_fin():
+    # Alas: trapezoidales
+    wing_left = Part.makePolygon([
+        App.Vector(P["nose_len"] + P["mid_len"]/2.0 - P["wing_chord"]/2.0, -P["wing_root_w"]/2.0, 0),
+        App.Vector(P["nose_len"] + P["mid_len"]/2.0 + P["wing_chord"]/2.0, -P["wing_tip_w"]/2.0, 0),
+        App.Vector(P["nose_len"] + P["mid_len"]/2.0 + P["wing_chord"]/2.0, P["wing_tip_w"]/2.0, 0),
+        App.Vector(P["nose_len"] + P["mid_len"]/2.0 - P["wing_chord"]/2.0, P["wing_root_w"]/2.0, 0),
+        App.Vector(P["nose_len"] + P["mid_len"]/2.0 - P["wing_chord"]/2.0, -P["wing_root_w"]/2.0, 0)
+    ])
+    wing_left = Part.Face(wing_left).extrude(App.Vector(0,0,P["hull_t"]))
+    wing_left_obj = add_obj(wing_left, "Wing_Left")
+
+    wing_right = wing_left.mirror(App.Vector(0,0,0), App.Vector(0,1,0))
+    wing_right_obj = add_obj(wing_right, "Wing_Right")
+
+    # Empenaje vertical
+    fin = make_box(P["fin_base"], P["fin_h"], P["hull_t"], cx=P["nose_len"] + P["mid_len"] + P["rear_len"] - P["fin_base"]/2.0, cy=0.0, cz=P["fin_h"]/2.0, label="Fin")
+    return wing_left_obj, wing_right_obj, fin
+
+def create_shields(fuse_fuselage_shape):
+    # Escudo de carbono: capa delgada alrededor del casco (cilindro simplificado)
+    try:
+        carbon_shield_outer = fuse_fuselage_shape.makeOffsetShape(5.0, 0.01, join=2, fill=True)  # 5mm offset
+        carbon_shield_inner = fuse_fuselage_shape.makeOffsetShape(3.0, 0.01, join=2, fill=True)  # 3mm inner
+        carbon_shield = carbon_shield_outer.cut(carbon_shield_inner)
+        carbon_shield_obj = add_obj(carbon_shield, "Carbon_Shield")
+    except:
+        # Fallback: cilindro simple
+        carbon_outer = make_cyl_x(P["mid_d"] + 10.0, P["nose_len"] + P["mid_len"] + P["rear_len"], cx=(P["nose_len"] + P["mid_len"] + P["rear_len"])/2.0, label="Carbon_Outer")
+        carbon_inner = make_cyl_x(P["mid_d"] + 6.0, P["nose_len"] + P["mid_len"] + P["rear_len"], cx=(P["nose_len"] + P["mid_len"] + P["rear_len"])/2.0, label="Carbon_Inner")
+        carbon_shield = carbon_outer.Shape.cut(carbon_inner.Shape)
+        carbon_shield_obj = add_obj(carbon_shield, "Carbon_Shield_Fallback")
+
+    # Escudo ablativo: cono grueso en la nariz
+    ablative_shield = make_cone_x(P["nose_base_d"] + 50.0, P["nose_base_d"], P["nose_len"]/2.0, cx=P["nose_len"]/4.0, label="Ablative_Shield")
+    return carbon_shield_obj, ablative_shield
+
+def create_additional_features():
+    # Paneles solares hexagonales: más futuristas
+    solar_panel_r = 400.0  # Más grandes
+    solar_panel_t = 5.0
+    import math
+    points = []
+    for i in range(6):
+        angle = 2 * math.pi * i / 6
+        x = solar_panel_r * math.cos(angle)
+        y = solar_panel_r * math.sin(angle)
+        points.append(App.Vector(x, y, 0))
+    solar_hex = Part.makePolygon(points + [points[0]])  # Cerrar el polígono
+    solar_hex = Part.Face(solar_hex).extrude(App.Vector(0,0,solar_panel_t))
+    solar_left = add_obj(solar_hex, "Solar_Left")
+    solar_left.Placement = App.Placement(App.Vector(P["nose_len"] + P["mid_len"]/2.0, -P["mid_d"]/2.0 - solar_panel_r, P["mid_d"]/2.0 + solar_panel_t/2.0), App.Rotation())
+
+    solar_right = add_obj(solar_hex, "Solar_Right")
+    solar_right.Placement = App.Placement(App.Vector(P["nose_len"] + P["mid_len"]/2.0, P["mid_d"]/2.0 + solar_panel_r, P["mid_d"]/2.0 + solar_panel_t/2.0), App.Rotation())
+
+    # Antenas y sensores avanzados
+    antenna_h = 250.0
+    antenna_d = 15.0
+    antenna1 = make_cyl_x(antenna_d, antenna_h, cx=P["nose_len"] + P["mid_len"]/4.0, cy=0.0, cz=P["mid_d"]/2.0 + antenna_h/2.0, label="Antenna1")
+    antenna2 = make_cyl_x(antenna_d, antenna_h, cx=P["nose_len"] + 3*P["mid_len"]/4.0, cy=P["mid_d"]/4.0, cz=P["mid_d"]/2.0 + antenna_h/2.0, label="Antenna2")
+    antenna3 = make_cyl_x(antenna_d, antenna_h, cx=P["nose_len"] + 3*P["mid_len"]/4.0, cy=-P["mid_d"]/4.0, cz=P["mid_d"]/2.0 + antenna_h/2.0, label="Antenna3")
+
+    # Sensores: domos esféricos
+    sensor_r = 50.0
+    sensor1 = Part.makeSphere(sensor_r)
+    sensor1_obj = add_obj(sensor1, "Sensor1")
+    sensor1_obj.Placement = App.Placement(App.Vector(P["nose_len"]/2.0, P["nose_base_d"]/4.0, P["nose_base_d"]/4.0), App.Rotation())
+
+    sensor2 = Part.makeSphere(sensor_r)
+    sensor2_obj = add_obj(sensor2, "Sensor2")
+    sensor2_obj.Placement = App.Placement(App.Vector(P["nose_len"]/2.0, -P["nose_base_d"]/4.0, P["nose_base_d"]/4.0), App.Rotation())
+
+    return solar_left, solar_right, antenna1, antenna2, antenna3, sensor1_obj, sensor2_obj
+
+# ============
+# Propulsor modular
+# ============
+def make_propulsor_modular(cx, cy, cz, label_prefix="Propulsor"):
+    parts = []
+    # Cámara principal (más grande)
+    camara = Part.makeCylinder(300, 500)
+    camara.Placement = App.Placement(App.Vector(cx - 250, cy, cz), rot_to_x())
+    parts.append(camara)
+    # Anillos estructurales
+    for i in range(4):
+        ring = Part.makeTorus(150, 15)
+        ring.Placement = App.Placement(App.Vector(cx - 200 + i*150, cy, cz), rot_to_x())
+        parts.append(ring)
+    # Boquillas múltiples (avanzadas)
+    for i in range(3):
+        angle = 120 * i
+        nozzle = Part.makeCone(120, 300, 400)
+        nozzle.Placement = App.Placement(App.Vector(cx + 300, cy, cz), App.Rotation(Z_AXIS, angle) * rot_to_x())
+        parts.append(nozzle)
+    # Unión
+    shape = parts[0]
+    for p in parts[1:]:
+        shape = shape.fuse(p)
+    return add_obj(shape, f"{label_prefix}_Asm")
+
+# Crear componentes
+hull, fuse_fuselage_shape, internal_bulkheads, ribs = create_hull()
+cockpit = create_cockpit()
+reactor, rings, coils = create_reactor()
+moderator_obj, tungsten_posts = create_shielding()
+nozzle, truss_tubes = create_nozzle_and_truss()
+tank = create_tank()
+legs = create_landing_gear()
+wing_left_obj, wing_right_obj, fin = create_wings_and_fin()
+carbon_shield_obj, ablative_shield = create_shields(fuse_fuselage_shape)
+solar_left, solar_right, antenna1, antenna2, antenna3, sensor1_obj, sensor2_obj = create_additional_features()
+
+propulsor_obj = make_propulsor_modular(P["prop_cx"], P["prop_cy"], P["prop_cz"])
+
+# Cortar casco para encaje del propulsor
+hull.Shape = hull.Shape.cut(propulsor_obj.Shape)
+
+# ============
+# Ensamblaje final
+# ============
+asm = doc.addObject("App::Part", "DFD_Ship")
+parts_to_add = [hull, cockpit, reactor, moderator_obj, nozzle, tank, wing_left_obj, wing_right_obj, fin, carbon_shield_obj, ablative_shield, solar_left, solar_right, antenna1, antenna2, antenna3, sensor1_obj, sensor2_obj, propulsor_obj]
+parts_to_add.extend(rings)
+parts_to_add.extend(coils)
+parts_to_add.extend(tungsten_posts)
+parts_to_add.extend(truss_tubes)
+parts_to_add.extend(legs)
+parts_to_add.extend(internal_bulkheads)
+parts_to_add.extend(ribs)
+for o in parts_to_add:
+    asm.addObject(o)
+
+doc.recompute()
+try:
+    Gui.ActiveDocument.ActiveView.viewAxonometric()
+except:
+    pass

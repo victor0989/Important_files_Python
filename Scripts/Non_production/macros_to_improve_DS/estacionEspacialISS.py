@@ -1,0 +1,779 @@
+# -*- coding: utf-8 -*-
+"""
+EstacionEspacialISS.py - FreeCAD Macro for ISS Structural Modeling and Analysis
+
+This macro creates a simplified model of the International Space Station (ISS)
+with structural analysis capabilities for space viability. It includes:
+- Geometric modeling of modules, trusses, and solar panels
+- Materials database for space-grade materials
+- Structural analysis (stress, strain, buckling)
+- Space environment considerations (thermal, radiation)
+- FEM integration for advanced analysis
+
+Author: Kilo Code
+Date: 2025
+"""
+
+import FreeCAD as App
+import Part
+import Fem
+import math
+import numpy as np
+
+class SpaceMaterial:
+    """Class to define materials properties for space applications"""
+
+    def __init__(self, name, density, young_modulus, poisson_ratio, yield_strength, thermal_expansion, radiation_resistance):
+        self.name = name
+        self.density = density  # kg/m³
+        self.young_modulus = young_modulus  # Pa
+        self.poisson_ratio = poisson_ratio
+        self.yield_strength = yield_strength  # Pa
+        self.thermal_expansion = thermal_expansion  # 1/K
+        self.radiation_resistance = radiation_resistance  # arbitrary units
+
+class ArmorLayer:
+    """Class representing an armor layer for protection"""
+
+    def __init__(self, material, thickness, layer_type='structural'):
+        self.material = material
+        self.thickness = thickness  # mm
+        self.layer_type = layer_type  # 'radiation', 'impact', 'thermal', 'structural'
+
+    def calculate_mass(self, area):
+        """Calculate mass of armor layer"""
+        volume = area * self.thickness / 1000  # m³ (thickness in mm)
+        return volume * self.material.density
+
+    def calculate_radiation_shielding(self, incident_radiation):
+        """Calculate radiation attenuation"""
+        # Simplified exponential decay
+        attenuation_coeff = 0.1 * self.material.radiation_resistance  # arbitrary
+        return incident_radiation * math.exp(-attenuation_coeff * self.thickness)
+
+    def calculate_impact_resistance(self, projectile_energy):
+        """Calculate energy absorption for micrometeorites"""
+        # Simplified ballistic limit equation
+        ballistic_limit = self.material.yield_strength * self.thickness**2 / 1000  # arbitrary units
+        return max(0, projectile_energy - ballistic_limit)
+
+# Materials database
+MATERIALS = {
+    'Aluminum_6061': SpaceMaterial('Aluminum 6061-T6', 2700, 68.9e9, 0.33, 276e6, 23.6e-6, 0.8),
+    'Titanium_6Al4V': SpaceMaterial('Titanium 6Al-4V', 4430, 113.8e9, 0.32, 880e6, 8.6e-6, 0.9),
+    'CarbonFiber': SpaceMaterial('Carbon Fiber Composite', 1600, 200e9, 0.3, 600e6, 0.5e-6, 0.95),
+    'StainlessSteel_316': SpaceMaterial('Stainless Steel 316', 8000, 193e9, 0.3, 290e6, 16e-6, 0.85),
+    # Advanced armor materials
+    'Tungsten_Alloy': SpaceMaterial('Tungsten Heavy Alloy', 19300, 400e9, 0.28, 1200e6, 4.5e-6, 0.98),
+    'Boron_Carbide': SpaceMaterial('Boron Carbide Ceramic', 2520, 450e9, 0.17, 350e6, 4.5e-6, 0.99),
+    'Depleted_Uranium': SpaceMaterial('Depleted Uranium Armor', 19100, 200e9, 0.32, 1000e6, 13.9e-6, 0.97),
+    'Nextel_Ceramic': SpaceMaterial('Nextel Ceramic Composite', 3200, 150e9, 0.25, 200e6, 3.2e-6, 0.96),
+    'Kevlar_Ballistic': SpaceMaterial('Kevlar Ballistic Fabric', 1440, 70e9, 0.36, 3600e6, 59e-6, 0.85),
+    'Aluminum_Oxide': SpaceMaterial('Aluminum Oxide Ceramic', 3970, 380e9, 0.22, 400e6, 8e-6, 0.95),
+    'Silicon_Carbide': SpaceMaterial('Silicon Carbide Armor', 3210, 410e9, 0.14, 600e6, 4.3e-6, 0.98),
+    'Diamond_Composite': SpaceMaterial('Diamond Composite Armor', 3500, 1200e9, 0.1, 800e6, 1e-6, 0.99),
+    # Exaggerated sci-fi materials
+    'Neutronium_Alloy': SpaceMaterial('Neutronium Composite', 50000, 1000e9, 0.1, 5000e6, 0.1e-6, 1.0),
+    'Plasma_Shield_Crystal': SpaceMaterial('Plasma Shield Crystal', 8000, 300e9, 0.2, 2000e6, 1e-6, 0.99),
+    'Adaptive_Nanoweave': SpaceMaterial('Adaptive Nanoweave Armor', 2500, 500e9, 0.3, 2000e6, 5e-6, 0.97)
+}
+
+class StructuralElement:
+    """Base class for structural elements"""
+
+    def __init__(self, name, material, geometry):
+        self.name = name
+        self.material = material
+        self.geometry = geometry
+        self.volume = geometry.Volume
+        self.mass = self.volume * material.density / 1e9  # Convert mm³ to m³
+
+    def calculate_stress(self, force, area):
+        """Calculate axial stress"""
+        return force / area
+
+    def calculate_strain(self, stress):
+        """Calculate strain using Hooke's law"""
+        return stress / self.material.young_modulus
+
+    def check_yield(self, stress):
+        """Check if stress exceeds yield strength"""
+        return stress < self.material.yield_strength
+
+class ISSModule(StructuralElement):
+    """Represents a cylindrical ISS module with armor capabilities"""
+
+    def __init__(self, name, material, length, diameter, wall_thickness):
+        self.length = length
+        self.diameter = diameter
+        self.wall_thickness = wall_thickness
+        self.inner_diameter = diameter - 2 * wall_thickness
+        self.armor_layers = []  # List of ArmorLayer objects
+        self.internal_structures = []  # List of internal components
+
+        # Create base geometry
+        outer_cylinder = Part.makeCylinder(diameter/2, length)
+        inner_cylinder = Part.makeCylinder(self.inner_diameter/2, length)
+        geometry = outer_cylinder.cut(inner_cylinder)
+
+        # Add internal floors and bulkheads for volume
+        self.add_internal_structures(geometry)
+
+        super().__init__(name, material, geometry)
+
+    def add_internal_structures(self, base_geometry):
+        """Add internal floors, bulkheads, and equipment for added volume"""
+        # Add floor plates every 2000mm
+        floor_thickness = 50  # mm
+        num_floors = int(self.length // 2000) - 1
+        for i in range(1, num_floors + 1):
+            z_pos = i * 2000
+            floor = Part.makeCylinder(self.inner_diameter/2, floor_thickness)
+            floor.translate(App.Vector(0, 0, z_pos - floor_thickness/2))
+            base_geometry = base_geometry.fuse(floor)
+
+        # Add radial bulkheads
+        bulkhead_thickness = 30  # mm
+        num_bulkheads = 4
+        for i in range(num_bulkheads):
+            angle = i * (360 / num_bulkheads)
+            bulkhead = Part.makeBox(self.inner_diameter, bulkhead_thickness, self.length)
+            bulkhead.rotate(App.Vector(0, 0, 0), App.Vector(0, 0, 1), angle)
+            base_geometry = base_geometry.fuse(bulkhead)
+
+        # Add equipment mounts (simplified as small cylinders)
+        equipment_volume = 0
+        num_equipment = 10
+        for i in range(num_equipment):
+            equip = Part.makeCylinder(200, 500)  # Equipment mount
+            x = (self.inner_diameter/2 - 400) * math.cos(i * 2 * math.pi / num_equipment)
+            y = (self.inner_diameter/2 - 400) * math.sin(i * 2 * math.pi / num_equipment)
+            z = self.length / 2
+            equip.translate(App.Vector(x, y, z))
+            base_geometry = base_geometry.fuse(equip)
+            equipment_volume += equip.Volume
+
+        self.geometry = base_geometry
+        # Update mass with internal structures
+        self.volume = base_geometry.Volume
+        self.mass = self.volume * self.material.density / 1e9
+
+    def add_armor_layer(self, armor_layer):
+        """Add an armor layer to the module"""
+        self.armor_layers.append(armor_layer)
+        # Update geometry (simplified - just increase diameter)
+        surface_area = math.pi * self.diameter * self.length
+        self.mass += armor_layer.calculate_mass(surface_area)
+        self.diameter += 2 * armor_layer.thickness
+        # Recreate geometry with new diameter
+        outer_cylinder = Part.makeCylinder(self.diameter/2, self.length)
+        inner_cylinder = Part.makeCylinder(self.inner_diameter/2, self.length)
+        self.geometry = outer_cylinder.cut(inner_cylinder)
+
+    def get_total_armor_thickness(self):
+        """Get total armor thickness"""
+        return sum(layer.thickness for layer in self.armor_layers)
+
+    def calculate_radiation_shielding(self, incident_radiation):
+        """Calculate total radiation shielding through all layers"""
+        remaining_radiation = incident_radiation
+        for layer in self.armor_layers:
+            remaining_radiation = layer.calculate_radiation_shielding(remaining_radiation)
+        return remaining_radiation
+
+    def calculate_impact_protection(self, projectile_energy):
+        """Calculate impact protection"""
+        remaining_energy = projectile_energy
+        for layer in self.armor_layers:
+            remaining_energy = layer.calculate_impact_resistance(remaining_energy)
+        return remaining_energy  # Energy that penetrates
+
+    def calculate_buckling_load(self):
+        """Calculate Euler buckling load for cylindrical shell"""
+        I = math.pi * (self.diameter**4 - self.inner_diameter**4) / 64  # Moment of inertia
+        K = 1  # Effective length factor
+        L = self.length
+        return math.pi**2 * self.material.young_modulus * I / (K * L)**2
+
+class ISSTruss(StructuralElement):
+    """Represents a truss element"""
+
+    def __init__(self, name, material, length, cross_section_area):
+        self.length = length
+        self.cross_section_area = cross_section_area
+
+        # Create simple box geometry for visualization
+        geometry = Part.makeBox(10, 10, length)  # Simplified representation
+
+        super().__init__(name, material, geometry)
+
+class SolarPanel(StructuralElement):
+    """Represents a solar panel array"""
+
+    def __init__(self, name, material, width, height, thickness):
+        self.width = width
+        self.height = height
+        self.thickness = thickness
+
+        geometry = Part.makeBox(width, height, thickness)
+
+        super().__init__(name, material, geometry)
+
+class HabitationModule(ISSModule):
+    """Specialized habitation module with life support"""
+
+    def __init__(self, name, material, length, diameter, wall_thickness, crew_capacity=6):
+        super().__init__(name, material, length, diameter, wall_thickness)
+        self.crew_capacity = crew_capacity
+        self.life_support_systems = {
+            'oxygen_generators': 4,
+            'water_recyclers': 2,
+            'co2_scrubbers': 4,
+            'temperature_control': True
+        }
+
+class LabModule(ISSModule):
+    """Scientific laboratory module"""
+
+    def __init__(self, name, material, length, diameter, wall_thickness, lab_type='general'):
+        super().__init__(name, material, length, diameter, wall_thickness)
+        self.lab_type = lab_type
+        self.equipment = {
+            'microscopes': 2,
+            'centrifuges': 1,
+            'spectrometers': 1,
+            'radiation_monitors': 4
+        }
+
+class AirlockModule(ISSModule):
+    """Airlock for EVA operations"""
+
+    def __init__(self, name, material, length, diameter, wall_thickness):
+        super().__init__(name, material, length, diameter, wall_thickness)
+        self.pressure_chambers = 2
+        self.eva_suits_storage = 8
+        self.decontamination_system = True
+
+class DefenseModule(ISSModule):
+    """Defense and protection module"""
+
+    def __init__(self, name, material, length, diameter, wall_thickness):
+        super().__init__(name, material, length, diameter, wall_thickness)
+        self.defense_systems = {
+            'laser_deflectors': 8,
+            'particle_shields': 4,
+            'impact_absorbers': 12,
+            'radiation_scanners': 6
+        }
+        # Add heavy armor automatically
+        self.add_armor_layer(ArmorLayer(MATERIALS['Tungsten_Alloy'], 50, 'impact'))
+        self.add_armor_layer(ArmorLayer(MATERIALS['Boron_Carbide'], 30, 'radiation'))
+        self.add_armor_layer(ArmorLayer(MATERIALS['Neutronium_Alloy'], 20, 'structural'))  # Exaggerated
+
+class CargoModule(ISSModule):
+    """Cargo storage and handling module"""
+
+    def __init__(self, name, material, length, diameter, wall_thickness, cargo_capacity=50000):
+        super().__init__(name, material, length, diameter, wall_thickness)
+        self.cargo_capacity = cargo_capacity  # kg
+        self.cargo_systems = {
+            'robotic_arms': 4,
+            'conveyor_systems': 2,
+            'storage_racks': 20,
+            'loading_docks': 2
+        }
+        # Add reinforced armor for cargo protection
+        self.add_armor_layer(ArmorLayer(MATERIALS['StainlessSteel_316'], 25, 'impact'))
+        self.add_armor_layer(ArmorLayer(MATERIALS['CarbonFiber'], 15, 'structural'))
+
+class SensorModule(ISSModule):
+    """Advanced sensor and observation module"""
+
+    def __init__(self, name, material, length, diameter, wall_thickness):
+        super().__init__(name, material, length, diameter, wall_thickness)
+        self.sensor_systems = {
+            'optical_telescopes': 3,
+            'radar_arrays': 2,
+            'spectrometers': 4,
+            'particle_detectors': 6,
+            'thermal_imagers': 2
+        }
+        # Add specialized armor for sensor protection
+        self.add_armor_layer(ArmorLayer(MATERIALS['Nextel_Ceramic'], 20, 'thermal'))
+        self.add_armor_layer(ArmorLayer(MATERIALS['Boron_Carbide'], 10, 'radiation'))
+
+class WeaponModule(ISSModule):
+    """Armed defense module with weapon systems"""
+
+    def __init__(self, name, material, length, diameter, wall_thickness):
+        super().__init__(name, material, length, diameter, wall_thickness)
+        self.weapon_systems = {
+            'laser_cannons': 4,
+            'rail_guns': 2,
+            'missile_launchers': 6,
+            'point_defense_turrets': 8,
+            'plasma_projectors': 2
+        }
+        self.ammunition_capacity = 1000  # rounds
+        self.power_requirements = 50000  # W
+        # Add heavy armor for weapon protection
+        self.add_armor_layer(ArmorLayer(MATERIALS['Depleted_Uranium'], 40, 'impact'))
+        self.add_armor_layer(ArmorLayer(MATERIALS['Diamond_Composite'], 25, 'radiation'))
+        self.add_armor_layer(ArmorLayer(MATERIALS['Adaptive_Nanoweave'], 15, 'structural'))
+
+class PropulsionSystem(StructuralElement):
+    """Advanced propulsion system for station maneuvering"""
+
+    def __init__(self, name, material, thrust_vector, fuel_type='ion'):
+        self.thrust_vector = thrust_vector  # (x, y, z) direction
+        self.fuel_type = fuel_type
+        self.thrust_power = 50000  # N (exaggerated)
+        self.fuel_capacity = 10000  # kg
+        self.efficiency = 0.85
+
+        # Create simplified geometry
+        geometry = Part.makeCylinder(500, 2000)  # Large thruster
+
+        super().__init__(name, material, geometry)
+
+    def calculate_delta_v(self, mass):
+        """Calculate velocity change capability"""
+        isp = 3000 if self.fuel_type == 'ion' else 450  # seconds
+        return isp * 9.81 * math.log(1 + (self.fuel_capacity / mass))
+
+class EnergyShield(StructuralElement):
+    """Sci-fi energy shield system"""
+
+    def __init__(self, name, material, coverage_area, power_consumption=10000):
+        self.coverage_area = coverage_area  # m²
+        self.power_consumption = power_consumption  # W
+        self.shield_strength = 0.99  # 99% effectiveness
+        self.recharge_time = 30  # seconds
+
+        # Create emitter geometry
+        geometry = Part.makeSphere(200)
+
+        super().__init__(name, material, geometry)
+
+    def calculate_shielding(self, incident_energy):
+        """Calculate energy absorption"""
+        return incident_energy * (1 - self.shield_strength)
+
+def create_iss_model():
+    """Create the main ISS structural model with enhanced realism and armor"""
+
+    # Create document
+    doc = App.newDocument("ISS_Structural_Analysis")
+
+    # Create main modules with armor - increased size and more modules
+    modules = []
+    module_positions = [(0, 0, 0), (8000, 0, 0), (16000, 0, 0), (24000, 0, 0), (32000, 0, 0), (40000, 0, 0)]  # mm, elongated ship
+
+    for i, pos in enumerate(module_positions):
+        if i == 0:
+            module = HabitationModule(f"Habitation_Module_{i+1}", MATERIALS['Aluminum_6061'], 8000, 5000, 12, crew_capacity=12)
+        elif i == 1:
+            module = LabModule(f"Lab_Module_{i+1}", MATERIALS['Titanium_6Al4V'], 7000, 4800, 15, lab_type='microgravity')
+        elif i == 2:
+            module = AirlockModule(f"Airlock_Module_{i+1}", MATERIALS['StainlessSteel_316'], 5000, 4200, 18)
+        elif i == 3:
+            module = DefenseModule(f"Defense_Module_{i+1}", MATERIALS['Tungsten_Alloy'], 6000, 5200, 20)
+        elif i == 4:
+            module = CargoModule(f"Cargo_Module_{i+1}", MATERIALS['CarbonFiber'], 9000, 5500, 10)
+        else:
+            module = WeaponModule(f"Weapon_Module_{i+1}", MATERIALS['Tungsten_Alloy'], 6000, 4500, 20)
+
+        # Add enhanced armor layers
+        module.add_armor_layer(ArmorLayer(MATERIALS['Tungsten_Alloy'], 30, 'impact'))
+        module.add_armor_layer(ArmorLayer(MATERIALS['Boron_Carbide'], 25, 'radiation'))
+        module.add_armor_layer(ArmorLayer(MATERIALS['Silicon_Carbide'], 20, 'thermal'))
+        module.add_armor_layer(ArmorLayer(MATERIALS['Diamond_Composite'], 15, 'structural'))
+        module.add_armor_layer(ArmorLayer(MATERIALS['Adaptive_Nanoweave'], 10, 'impact'))
+        module.add_armor_layer(ArmorLayer(MATERIALS['Neutronium_Alloy'], 5, 'radiation'))  # Exaggerated
+
+        modules.append(module)
+
+        # Add to document
+        obj = doc.addObject("Part::Feature", module.name)
+        obj.Shape = module.geometry
+        obj.Placement.Base = pos
+
+    # Create connecting tunnels to close gaps between modules
+    connecting_tunnels = []
+    for i in range(len(modules)-1):
+        # Calculate distance between module centers
+        dist = module_positions[i+1][0] - module_positions[i][0] - modules[i].length/2 - modules[i+1].length/2
+        if dist > 0:  # Only if there's a gap
+            tunnel_length = dist
+            tunnel = Part.makeCylinder(min(modules[i].inner_diameter, modules[i+1].inner_diameter)/2 - 100, tunnel_length)
+            tunnel_pos = (module_positions[i][0] + modules[i].length/2, 0, 0)
+            connecting_tunnels.append((tunnel, tunnel_pos, f"ConnectingTunnel_{i+1}"))
+
+            obj = doc.addObject("Part::Feature", f"ConnectingTunnel_{i+1}")
+            obj.Shape = tunnel
+            obj.Placement.Base = tunnel_pos
+
+    # Create trusses connecting modules - updated for new positions
+    trusses = []
+    for i in range(len(modules)-1):
+        truss_length = module_positions[i+1][0] - module_positions[i][0]
+        truss = ISSTruss(f"Truss_{i+1}", MATERIALS['Titanium_6Al4V'], truss_length, 2000)  # Thicker trusses
+        trusses.append(truss)
+
+        obj = doc.addObject("Part::Feature", truss.name)
+        obj.Shape = truss.geometry
+        obj.Placement.Base = (module_positions[i][0] + modules[i].length/2, 3000, 0)
+
+    # Create solar panels
+    solar_panels = []
+    panel_positions = [(3000, 4000, 2500), (9000, 4000, 2500), (15000, 4000, 2500)]
+
+    for i, pos in enumerate(panel_positions):
+        panel = SolarPanel(f"SolarPanel_{i+1}", MATERIALS['CarbonFiber'], 25000, 6000, 60)
+        solar_panels.append(panel)
+
+        obj = doc.addObject("Part::Feature", panel.name)
+        obj.Shape = panel.geometry
+        obj.Placement.Base = pos
+
+    # Add propulsion systems
+    propulsion_systems = []
+    prop_positions = [(-2000, 0, 0), (20000, 0, 0), (10000, 5000, 0), (10000, -5000, 0)]
+
+    for i, pos in enumerate(prop_positions):
+        prop = PropulsionSystem(f"Propulsion_{i+1}", MATERIALS['Titanium_6Al4V'], (0, 0, 1), 'ion')
+        propulsion_systems.append(prop)
+
+        obj = doc.addObject("Part::Feature", prop.name)
+        obj.Shape = prop.geometry
+        obj.Placement.Base = pos
+
+    # Add energy shields
+    energy_shields = []
+    shield_positions = [(0, 0, 3000), (6000, 0, 3000), (12000, 0, 3000)]
+
+    for i, pos in enumerate(shield_positions):
+        shield = EnergyShield(f"EnergyShield_{i+1}", MATERIALS['Plasma_Shield_Crystal'], 10000, 15000)
+        energy_shields.append(shield)
+
+        obj = doc.addObject("Part::Feature", shield.name)
+        obj.Shape = shield.geometry
+        obj.Placement.Base = pos
+
+    return doc, modules, trusses, solar_panels, propulsion_systems, energy_shields, connecting_tunnels
+
+def perform_structural_analysis(modules, trusses, solar_panels, propulsion_systems=None, energy_shields=None):
+    """Perform enhanced structural analysis with armor considerations"""
+
+    analysis_results = {}
+
+    # Analyze modules
+    for module in modules:
+        # Simulate axial load (e.g., from docking) + armor weight
+        axial_force = 150000 + module.mass * 9.81  # N (increased load due to armor)
+        area = math.pi * (module.diameter**2 - module.inner_diameter**2) / 4
+        stress = module.calculate_stress(axial_force, area)
+        strain = module.calculate_strain(stress)
+        yield_check = module.check_yield(stress)
+        buckling_load = module.calculate_buckling_load()
+
+        # Armor analysis
+        armor_thickness = module.get_total_armor_thickness()
+        radiation_shielding = module.calculate_radiation_shielding(1000)  # arbitrary incident radiation
+        impact_protection = module.calculate_impact_protection(50000)  # arbitrary projectile energy
+
+        analysis_results[module.name] = {
+            'stress': stress,
+            'strain': strain,
+            'yield_safe': yield_check,
+            'buckling_load': buckling_load,
+            'mass': module.mass,
+            'armor_thickness': armor_thickness,
+            'radiation_shielding': radiation_shielding,
+            'impact_protection': impact_protection
+        }
+
+    # Analyze trusses
+    for truss in trusses:
+        compressive_force = 50000  # N (compression from modules)
+        stress = truss.calculate_stress(compressive_force, truss.cross_section_area)
+        strain = truss.calculate_strain(stress)
+        yield_check = truss.check_yield(stress)
+
+        analysis_results[truss.name] = {
+            'stress': stress,
+            'strain': strain,
+            'yield_safe': yield_check,
+            'mass': truss.mass
+        }
+
+    # Analyze solar panels
+    for panel in solar_panels:
+        # Wind-like force in space (micrometeorites, etc.)
+        force = 2000  # N (increased due to larger panels)
+        area = panel.width * panel.thickness
+        stress = panel.calculate_stress(force, area)
+        strain = panel.calculate_strain(stress)
+        yield_check = panel.check_yield(stress)
+
+        analysis_results[panel.name] = {
+            'stress': stress,
+            'strain': strain,
+            'yield_safe': yield_check,
+            'mass': panel.mass
+        }
+
+    # Analyze propulsion systems
+    if propulsion_systems:
+        total_mass = sum(m.mass for m in modules + trusses + solar_panels)
+        for prop in propulsion_systems:
+            delta_v = prop.calculate_delta_v(total_mass)
+            analysis_results[prop.name] = {
+                'thrust_power': prop.thrust_power,
+                'delta_v': delta_v,
+                'mass': prop.mass,
+                'fuel_capacity': prop.fuel_capacity
+            }
+
+    # Analyze energy shields
+    if energy_shields:
+        for shield in energy_shields:
+            shielding_effectiveness = shield.calculate_shielding(100000)  # arbitrary incident energy
+            analysis_results[shield.name] = {
+                'shield_strength': shield.shield_strength,
+                'power_consumption': shield.power_consumption,
+                'coverage_area': shield.coverage_area,
+                'shielding_effectiveness': shielding_effectiveness,
+                'mass': shield.mass
+            }
+
+    return analysis_results
+
+def space_environment_analysis(analysis_results, temperature_delta=150, radiation_dose=2000, micrometeorite_flux=100):
+    """Analyze effects of space environment with armor considerations"""
+
+    space_factors = {}
+
+    for element_name, results in analysis_results.items():
+        material = None
+        if 'Habitation' in element_name or 'Module' in element_name:
+            material = MATERIALS['Aluminum_6061']
+        elif 'Lab' in element_name:
+            material = MATERIALS['Titanium_6Al4V']
+        elif 'Airlock' in element_name:
+            material = MATERIALS['StainlessSteel_316']
+        elif 'Defense' in element_name:
+            material = MATERIALS['Tungsten_Alloy']
+        elif 'Cargo' in element_name:
+            material = MATERIALS['CarbonFiber']
+        elif 'Sensor' in element_name:
+            material = MATERIALS['Titanium_6Al4V']
+        elif 'Weapon' in element_name:
+            material = MATERIALS['Tungsten_Alloy']
+        elif 'Truss' in element_name:
+            material = MATERIALS['Titanium_6Al4V']
+        elif 'SolarPanel' in element_name:
+            material = MATERIALS['CarbonFiber']
+        elif 'Propulsion' in element_name:
+            material = MATERIALS['Titanium_6Al4V']
+        elif 'EnergyShield' in element_name:
+            material = MATERIALS['Plasma_Shield_Crystal']
+
+        if material:
+            # Thermal stress calculation
+            thermal_stress = material.young_modulus * material.thermal_expansion * temperature_delta
+
+            # Radiation degradation factor (improved with armor)
+            base_degradation = 1 - (1 - material.radiation_resistance) * (radiation_dose / 10000)
+            if 'armor_thickness' in results:
+                armor_shielding = results.get('radiation_shielding', 1)
+                degradation_factor = base_degradation * armor_shielding
+            else:
+                degradation_factor = base_degradation
+
+            # Combined stress
+            total_stress = results['stress'] + thermal_stress
+            adjusted_yield = material.yield_strength * degradation_factor
+
+            # Impact analysis
+            impact_risk = micrometeorite_flux * (1 - results.get('impact_protection', 0) / 50000)
+
+            space_factors[element_name] = {
+                'thermal_stress': thermal_stress,
+                'degradation_factor': degradation_factor,
+                'total_stress': total_stress,
+                'space_safe': total_stress < adjusted_yield,
+                'impact_risk': impact_risk
+            }
+
+    return space_factors
+
+def create_fem_analysis(doc, elements):
+    """Create FEM analysis for advanced structural validation"""
+
+    # Create FEM analysis object
+    analysis = Fem.makeAnalysis(doc, "Structural_Analysis")
+
+    # Add solver
+    solver = Fem.makeSolverCalculix(doc, "Calculix")
+    analysis.addObject(solver)
+
+    # Add materials
+    for element in elements:
+        mat_obj = Fem.makeMaterialSolid(doc, f"Material_{element.name}")
+        mat_obj.Material = {
+            'Name': element.material.name,
+            'YoungsModulus': str(element.material.young_modulus),
+            'PoissonRatio': str(element.material.poisson_ratio),
+            'Density': str(element.material.density)
+        }
+        analysis.addObject(mat_obj)
+
+    # Add fixed constraint (simulate attachment points)
+    fixed_constraint = Fem.makeConstraintFixed(doc, "Fixed_Constraint")
+    fixed_constraint.References = [(doc.Module_1, "Face1")]  # Example reference
+    analysis.addObject(fixed_constraint)
+
+    # Add force constraint
+    force_constraint = Fem.makeConstraintForce(doc, "Force_Constraint")
+    force_constraint.References = [(doc.SolarPanel_1, "Face1")]
+    force_constraint.Force = 1000  # N
+    force_constraint.Direction = (0, 0, -1)
+    analysis.addObject(force_constraint)
+
+    return analysis
+
+def print_analysis_report(analysis_results, space_factors):
+    """Print comprehensive analysis report"""
+
+    print("=== Enhanced Armored ISS Structural Analysis Report ===")
+    print()
+
+    total_mass = 0
+    total_armor_mass = 0
+    for name, results in analysis_results.items():
+        print(f"Element: {name}")
+        print(".2f")
+        print(".2e")
+        print(".2e")
+        print(f"  Yield Safe: {results['yield_safe']}")
+        if 'buckling_load' in results:
+            print(".2e")
+        if 'armor_thickness' in results:
+            print(f"  Armor Thickness: {results['armor_thickness']} mm")
+            print(".2f")
+            print(".2f")
+            total_armor_mass += results.get('armor_mass', 0)
+        if 'thrust_power' in results:
+            print(f"  Thrust Power: {results['thrust_power']} N")
+            print(".2f")
+        if 'shield_strength' in results:
+            print(f"  Shield Strength: {results['shield_strength']*100}%")
+            print(f"  Power Consumption: {results['power_consumption']} W")
+        print()
+
+        total_mass += results['mass']
+
+    print(".2f")
+    print(".2f")
+    print()
+
+    print("=== Space Environment Analysis with Armor ===")
+    for name, factors in space_factors.items():
+        print(f"Element: {name}")
+        print(".2e")
+        print(".2f")
+        print(".2e")
+        print(f"  Space Safe: {factors['space_safe']}")
+        print(".2f")
+        print()
+
+def calculate_total_volume(elements):
+    """Calculate total volume of all structural elements"""
+    return sum(element.volume for element in elements)
+
+def calculate_total_mass(elements):
+    """Calculate total mass of all structural elements"""
+    return sum(element.mass for element in elements)
+
+def calculate_armor_efficiency(modules):
+    """Calculate overall armor efficiency"""
+    total_armor_mass = 0
+    total_protection = 0
+    for module in modules:
+        if hasattr(module, 'armor_layers'):
+            armor_mass = sum(layer.calculate_mass(math.pi * module.diameter * module.length) for layer in module.armor_layers)
+            total_armor_mass += armor_mass
+            protection = module.calculate_radiation_shielding(1000) + module.calculate_impact_protection(50000)
+            total_protection += protection
+    return total_protection / total_armor_mass if total_armor_mass > 0 else 0
+
+def optimize_armor_distribution(modules, available_mass):
+    """Optimize armor distribution for maximum protection"""
+    # Simple optimization: distribute armor based on module criticality
+    critical_modules = ['Defense', 'Weapon', 'Habitation']
+    for module in modules:
+        if any(crit in module.name for crit in critical_modules):
+            # Add extra armor to critical modules
+            module.add_armor_layer(ArmorLayer(MATERIALS['Neutronium_Alloy'], 10, 'impact'))
+
+def export_model_data(doc, filename="iss_model_data.json"):
+    """Export model data to JSON file"""
+    import json
+    model_data = {
+        'modules': [{'name': m.name, 'mass': m.mass, 'volume': m.volume} for m in doc.Objects if 'Module' in m.Name],
+        'total_mass': calculate_total_mass([obj for obj in doc.Objects if hasattr(obj, 'Shape')]),
+        'total_volume': calculate_total_volume([obj for obj in doc.Objects if hasattr(obj, 'Shape')])
+    }
+    with open(filename, 'w') as f:
+        json.dump(model_data, f, indent=2)
+
+def main():
+    """Main execution function"""
+
+    print("Creating Enhanced Armored ISS Structural Model...")
+
+    # Create model
+    doc, modules, trusses, solar_panels, propulsion_systems, energy_shields, connecting_tunnels = create_iss_model()
+    all_elements = modules + trusses + solar_panels + propulsion_systems + energy_shields
+
+    print("Performing Enhanced Structural Analysis...")
+    analysis_results = perform_structural_analysis(modules, trusses, solar_panels, propulsion_systems, energy_shields)
+
+    print("Analyzing Space Environment Effects with Armor...")
+    space_factors = space_environment_analysis(analysis_results)
+
+    print("Setting up FEM Analysis...")
+    try:
+        fem_analysis = create_fem_analysis(doc, all_elements)
+        print("FEM Analysis setup complete. Run solver manually in FreeCAD.")
+    except Exception as e:
+        print(f"FEM setup failed: {e}")
+
+    print_analysis_report(analysis_results, space_factors)
+
+    # Additional utility calculations
+    total_volume = calculate_total_volume(all_elements)
+    total_mass = calculate_total_mass(all_elements)
+    armor_efficiency = calculate_armor_efficiency(modules)
+
+    print(".2f")
+    print(".2f")
+    print(".4f")
+
+    # Export model data
+    try:
+        export_model_data(doc)
+        print("Model data exported to iss_model_data.json")
+    except Exception as e:
+        print(f"Export failed: {e}")
+
+    # Recompute document
+    doc.recompute()
+
+    print("Enhanced Armored ISS Model and Analysis Complete!")
+    print("Open the FreeCAD document to view the heavily armored 3D model.")
+    print("Features: Multi-layered armor, propulsion systems, energy shields, specialized modules, connecting tunnels.")
+
+if __name__ == "__main__":
+    main()
