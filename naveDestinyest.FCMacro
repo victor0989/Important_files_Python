@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 # FreeCAD Macro: Nave DFD XL adaptada a perihelio extremo
-# Autor: Víctor Alonso García + Copilot
 # Descripción: Variante XL del DFD con escudos TPS multilayer, blindajes, radiadores en sombra,
 # tanques, sensores y tren, fusionada en un único sólido manifold para 3D printing.
 # Unidades: mm
